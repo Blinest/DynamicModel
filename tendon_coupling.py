@@ -233,11 +233,6 @@ L_STRUT_DEFAULT = _CELL["L_strut"]  # m,    晶胞斜杆长 (= π·r_i/(N_circ·
 GJ_DEFAULT = EI0_DEFAULT            # N·m², 抗扭 (圆截面基准与弯曲同值)
 
 
-def rod_axial_stiffness(**kw):
-    """中心杆/臂体等效轴向刚度 k_rod (N/m) —— 与 EI0 同源的便捷入口."""
-    return cell_stiffness(**kw)["k_rod"]
-
-
 def EI_lattice(kappa_xy, L_strut=L_STRUT_DEFAULT, C0=C0_DEFAULT):
     """菱形晶胞等效弯曲刚度 — **割线刚度** EI_eq(κ) = C(κ)/κ.
 
@@ -531,6 +526,15 @@ import warnings as _warnings
 
 _JIT_IMPORT_ERROR = None
 _USE_JIT = _os.environ.get("TC_NO_JIT", "0") != "1"
+# 打靶雅可比差分方式:
+#   "forward" (默认) — 前向差分, 6 次正解/轮, 截断误差 O(h)
+#   "central"        — 中心差分, 12 次正解/轮, 截断误差 O(h²)
+# 实测 (纯 numpy, N=48, n_p=n_d=20, tol=1e-6):
+#   热启动 x0 取自表记录 : 样本-次 1322→734 (−44%), 墙钟 3.3s→1.5s, 收敛同为 48/48,
+#                          中位残差 5.82e-8 → 6.08e-8 (同量级, 非逐位相同)
+#   冷启动 (直臂初值)    : 收敛 10/48 → 18/48, 中位残差 24.9 → 3.21, 墙钟 11.7s→8.0s
+# 想要与旧版逐位一致的对拍, 设 `TC_JAC_MODE=central`。
+_JAC_MODE = _os.environ.get("TC_JAC_MODE", "forward").strip().lower()
 if not _USE_JIT:
     _JIT_IMPORT_ERROR = "TC_NO_JIT=1 (用户显式关闭)"
 else:
@@ -545,8 +549,6 @@ else:
             "[tendon_coupling] numba JIT 不可用 → 回退纯 numpy 参考实现, 正解约慢 "
             f"10 倍以上。原因: {_JIT_IMPORT_ERROR}。换用装了 numba 的解释器即可恢复。",
             RuntimeWarning, stacklevel=2)
-
-L0_WIRE = {w: (L1 if w in SEG_A else L) for w in range(6)}
 
 
 def tendon_path_length(shape, w, mode="geodesic"):
@@ -829,7 +831,6 @@ def _intermed_b_vec(u, v, Kse, Kbt, wires, tau, ri_all, fe_b):
     ⚠ 形参序与 `_intermed_b` **一致**: (u, v, ...)。
     与原版的唯一差别是浮点求和次序 (误差 ~1e-15)。
     """
-    N = v.shape[0]
     RI = np.asarray(ri_all, float)[list(wires)]              # (W,3)
     RIH = _hat_all(RI)                                       # (W,3,3) — 只算一次
     uh = hat_b(u)                                            # (N,3,3)
@@ -1071,25 +1072,44 @@ def shooting_batch(taus, params, x0=None, tol=1e-8, max_iter=15, lam0=1e-3,
     res, tip = forward_batch(x, taus, params)
     converged = np.zeros(N, bool)
     n_iter = np.zeros(N, int)
-    nres = res.shape[1]                              # 6 (或 7, 含杆弧长约束)
     failed = ~np.isfinite(res).all(axis=1)          # 初始就非有限 → 直接失败
     for it in range(max_iter):
         active = ~converged & ~failed
         if not active.any():
             break
-        # 数值雅可比 (N,nx,6): 对每个未知分量做 ±h 批量前向
+        # ★ 2026-10-05: 雅可比只对**活跃行**求 (已收敛/已失败的行不再参与迭代, 算它们是纯浪费)。
+        #   每轮原本对全部 N 行 × 6 分量做 ±h 中心差分 = 12 次全量正解;
+        #   现在只对 na 行做 ⇒ 12 次**子集**正解。数值与原实现逐位一致:
+        #   同一行的 J/dx/improved 只依赖该行自身的 x/res/lam, 与其它行无关。
+        idx = np.flatnonzero(active)
+        na = idx.size
+        xa = x[idx]; ta = taus[idx]; ra = res[idx]
         nx = res.shape[1]
-        J = np.zeros((N, nx, 6)); h = 1e-6
-        for c in range(6):
-            xp = x.copy(); xm = x.copy()
-            xp[:, c] += h; xm[:, c] -= h
-            rp, _ = forward_batch(xp, taus, params)
-            rm, _ = forward_batch(xm, taus, params)
-            J[:, :, c] = (rp - rm) / (2 * h)
+        J = np.zeros((na, nx, 6)); h = 1e-6
+        if _JAC_MODE == "forward":
+            # 前向差分: 6 次正解 (中心差分要 12 次)。雅可比精度降到 O(h),
+            # 但 LM 只用它定下降方向 ⇒ 实测收敛结果一致, 迭代次数略增或无变化。
+            xp = xa.copy()
+            for c in range(6):
+                xp[:, c] = xa[:, c] + h
+                rp, _ = forward_batch(xp, ta, params)
+                J[:, :, c] = (rp - ra) / h
+                xp[:, c] = xa[:, c]          # 复位该列 (复用缓冲)
+        else:
+            xp = xa.copy(); xm = xa.copy()               # 复用缓冲, 不再每分量 copy 两次
+            for c in range(6):
+                xp[:, c] = xa[:, c] + h
+                xm[:, c] = xa[:, c] - h
+                rp, _ = forward_batch(xp, ta, params)
+                rm, _ = forward_batch(xm, ta, params)
+                J[:, :, c] = (rp - rm) / (2 * h)
+                # ⚠ 必须复位该列, 否则下一分量会带上本轮扰动 (复用缓冲的经典坑)
+                xp[:, c] = xa[:, c]
+                xm[:, c] = xa[:, c]
         J = np.where(np.isfinite(J), J, 0.0)
         H = np.einsum('nki,nkj->nij', J, J)
-        H += lam[:, None, None] * np.eye(6)[None]
-        g = np.einsum('nki,nk->ni', J, res)
+        H += lam[idx][:, None, None] * np.eye(6)[None]
+        g = np.einsum('nki,nk->ni', J, ra)
         try:
             dx = -np.linalg.solve(H, g[..., None])[..., 0]
         except np.linalg.LinAlgError:
@@ -1097,23 +1117,26 @@ def shooting_batch(taus, params, x0=None, tol=1e-8, max_iter=15, lam0=1e-3,
         dx = np.where(np.isfinite(dx), dx, 0.0)
         mx = np.max(np.abs(dx), axis=1)
         scale = np.where(mx > 0.5, 0.5 / np.maximum(mx, 1e-30), 1.0)
-        x_new = np.clip(x + dx * scale[:, None], lo, hi)
-        res_new, tip_new = forward_batch(x_new, taus, params)
+        x_new = np.clip(xa + dx * scale[:, None], lo, hi)
+        res_new, tip_new = forward_batch(x_new, ta, params)
         bad = ~np.isfinite(res_new).all(axis=1)
-        n_old = np.linalg.norm(res, axis=1)
+        n_old = np.linalg.norm(ra, axis=1)
         n_new = np.linalg.norm(res_new, axis=1)
-        improved = (n_new < n_old) & ~bad & active
-        lam = np.where(improved, np.maximum(lam / 5.0, 1e-10),
-                       np.minimum(lam * 10.0, 1e9))
-        x = np.where(improved[:, None], x_new, x)
-        res = np.where(improved[:, None], res_new, res)
-        tip = np.where(improved[:, None], tip_new, tip)
-        failed = failed | (bad & active)
+        improved = (n_new < n_old) & ~bad
+        lam[idx] = np.where(improved, np.maximum(lam[idx] / 5.0, 1e-10),
+                            np.minimum(lam[idx] * 10.0, 1e9))
+        x[idx[improved]] = x_new[improved]
+        res[idx[improved]] = res_new[improved]
+        tip[idx[improved]] = tip_new[improved]
+        failed[idx[bad]] = True
         # 残差列数随 rod_constraint 变 (6 或 7); 用前 6 列的力/矩范数判收敛,
         # 否则杆弧长残差 (量纲不同) 会把收敛判据整体拉偏。
-        conv_now = np.linalg.norm(res[:, :6], axis=1) < tol
-        n_iter = np.where(conv_now & ~converged, it + 1, n_iter)
-        converged = converged | conv_now
+        n_now = np.linalg.norm(np.where(improved[:, None], res_new, ra)[:, :6],
+                               axis=1)
+        conv_now = n_now < tol
+        # n_iter 语义: 首次判收敛时所花的迭代次数 (it 从 0 起 ⇒ it+1)
+        n_iter[idx[conv_now & ~converged[idx]]] = it + 1
+        converged[idx] = converged[idx] | conv_now
     inf = np.linalg.norm(np.where(np.isfinite(res), res, np.inf), axis=1)
     return {"x": x, "res": res, "tip": tip, "converged": converged,
             "n_iter": n_iter, "inf": inf, "failed": failed}
@@ -1141,8 +1164,6 @@ def shooting_batch_retry(taus, params, tol=1e-8, max_iter=15, n_try=3):
         out["tip"][idx] = sub["tip"]; out["converged"][idx] = sub["converged"]
         out["inf"][idx] = sub["inf"]; out["failed"][idx] = sub["failed"]
     return out
-
-
 
 
 __all__ = [
@@ -1829,9 +1850,6 @@ class TendonCouplingModel:
 # ══════════════════════════════════════════════════════════════════════
 # §2  函数式入口 (不想用类时)
 # ══════════════════════════════════════════════════════════════════════
-def build_coupling_model(**kw):
-    """构造默认模型 (等价 TendonCouplingModel())."""
-    return TendonCouplingModel(**kw)
 
 
 def coupling_matrix(tau, **kw):

@@ -30,7 +30,7 @@ except ImportError:                       # 退化: 暴力半径/最近邻 (慢,
     HAVE_SCIPY = False
     cKDTree = None
 
-from tendon_coupling import (SDMParams, shooting, L1, L2, L, SEG_A, SEG_B, hat, _E3,
+from tendon_coupling import (SDMParams, shooting, L1, L2, L, SEG_A, hat, _E3,
                     LatticeCell, N_CIRC_SEG_A, N_CIRC_SEG_B,
                     ALPHA_DEG, C0_DEFAULT, L_STRUT_DEFAULT, EI0_DEFAULT,
                     K_ROD_DEFAULT, R_DISK_DEFAULT, GJ_DEFAULT,
@@ -240,12 +240,6 @@ def rec_from_sol(tau, sol, params):
         "converged": bool(sol["converged"]),
         "x": np.array(sol["x"], float),               # 打靶未知 [v0;u0] 供热启动
     }
-
-
-def sample_one(tau, params, x0=None):
-    sol = shooting(tau, params, g_world=(0, 0, -9.81), tol=1e-8,
-                   max_iter=60, x0=x0)
-    return rec_from_sol(tau, sol, params)
 
 
 # ==================== 建表 (§10.2) ====================
@@ -481,30 +475,6 @@ def build_table(N=2000, tau_max=8.0, params=None, seed=0,
     records = [r for r in records if r is not None]
     _fill_dL(records, params)
     return records
-
-
-def repair_records(records, params=None):
-    """★ 原地修复 p_tip/R_tip/kcoef, 使之与记录的 x 自洽.
-
-    背景: 早期 build_table 里冷启动兜底替换了 out["x"][j] 但复用了替换前
-    算的 curves ⇒ 约 11% 记录的 p_tip/R_tip/κ系数 与其 x 不符 (dL/res 是对的,
-    因为它们后来从 x 重算)。x 本身正确, 所以只需按 x 重算形状量, 不必重建表。
-    """
-    from tendon_coupling import forward_batch
-    params = params or default_params()
-    TAU = np.array([r["tau"] for r in records])
-    X = np.array([r["x"] for r in records])
-    _, _, cv = forward_batch(X, TAU, params, want_curve=True)
-    Pc, S, Uc, Cc, Rc, Nc, Vv = cv
-    n_fix = 0
-    for i, r in enumerate(records):
-        dp = np.linalg.norm(r["p_tip"] - Pc[i, -1])
-        if dp > 1e-6:                       # 与 x 不自洽 → 修复
-            n_fix += 1
-        r["p_tip"] = Pc[i, -1].copy()
-        r["R_tip"] = Rc[i, -1].copy()
-        r["kcoef"] = _kappa_nodes(S, Cc[i], params, Vv[i])
-    return n_fix
 
 
 def _fill_dL(records, params):
@@ -905,117 +875,6 @@ def solve_pose_multi(p_des, R_des, params, F_tip=(0, 0, 0), tau0=None, x0=None,
                       "pos_res_mm": float(np.linalg.norm(e[:3]) * 1000),
                       "rot_res_mrad": float(np.linalg.norm(e[3:]) * 1000),
                       "ok": bool(ok)}
-
-
-def solve_pose_batch(p_des, R_des, params, tau0=None, x0=None, max_iter=12,
-                     tol_pos_mm=0.2, tol_rot_mrad=1.0, h=0.05, chunk=500,
-                     verbose=False):
-    """§10.1 批量外层牛顿: N 个目标位姿 **同时** 反解 τ∈R⁶.
-
-    `solve_pose_multi` 是单姿态版, 每点 >100s (n=300), 按位姿采样时不可用
-    (20k 点 = 23 天)。这里把外层牛顿也批量化:
-      每轮对 N 个样本各构造 13 个 τ (中心 + 6×±h) → 一次 shooting_batch,
-      再按样本切出 6×6 雅可比 → 批量解 Levenberg 步。
-    内层打靶本身已是批量/向量化的, 所以整体摊薄成本随 N 下降。
-
-    热启动至关重要: 给最近邻表点的 (tau0, x0), 从 τ=0 冷启动不收敛。
-
-    返回 dict: tau(N,6), x(N,6), tip(N,3), converged(N,), n_iter(N,),
-               pos_res_mm(N,), rot_res_mrad(N,), tip_all(用于调试)
-    """
-    p_des = np.atleast_2d(np.asarray(p_des, float))
-    R_des = np.asarray(R_des, float)
-    if R_des.ndim == 2:
-        R_des = R_des[None]
-    N = len(p_des)
-    tpos = tol_pos_mm * 1e-3
-    trot = tol_rot_mrad * 1e-3
-
-    tau = np.zeros((N, 6)) if tau0 is None else np.array(tau0, float).copy()
-    xh = None if x0 is None else np.array(x0, float).copy()
-    conv = np.zeros(N, bool)
-    n_it = np.zeros(N, int)
-    pos_res = np.full(N, np.inf)
-    rot_res = np.full(N, np.inf)
-    tip_out = np.full((N, 3), np.nan)
-    R_out = np.tile(np.eye(3), (N, 1, 1))
-    alive = np.ones(N, bool)
-
-    off = np.array([0] + [1 + c for c in range(6)] + [7 + c for c in range(6)])
-    J_ = np.arange(6)
-
-    for c0 in range(0, N, chunk):
-        c1 = min(c0 + chunk, N)
-        sl = slice(c0, c1)
-        m = c1 - c0
-        tau_c = tau[sl]
-        xh_c = None if xh is None else xh[sl]
-        p_c = p_des[sl]
-        R_c = R_des[sl]
-        done = np.zeros(m, bool)
-        for it in range(max_iter):
-            # 13 个 τ 行/样本, 顺序 [中心, +h*e0..5, -h*e0..5]
-            T = np.concatenate(
-                [tau_c[:, None, :],
-                 tau_c[:, None, :] + h * np.eye(6)[None, :, :],
-                 tau_c[:, None, :] - h * np.eye(6)[None, :, :]], axis=1
-            ).reshape(-1, 6)
-            T = np.clip(T, 0.0, 200.0)
-            x0b = None if xh_c is None else np.repeat(xh_c, 13, axis=0)
-            out = shooting_batch(T, params, x0=x0b, tol=1e-9, max_iter=15)
-            _, _, curves = forward_batch(out["x"], T, params, want_curve=True)
-            pr = np.repeat(p_c, 13, axis=0)
-            Rr = np.repeat(R_c, 13, axis=0)
-            E = _pose_err_batch(out["tip"], curves[4][:, -1], pr, Rr).reshape(m, 13, 6)
-            e0 = E[:, 0, :]
-            J = (E[:, 1:7, :] - E[:, 7:13, :]) / (2 * h)      # (m,6,6) [dE_c/dτ_c]
-            J = np.transpose(J, (0, 2, 1))
-            J = np.where(np.isfinite(J), J, 0.0)
-            if xh_c is None:
-                xh_c = out["x"].reshape(m, 13, 6)[:, 0, :].copy()
-            else:
-                xh_c = out["x"].reshape(m, 13, 6)[:, 0, :].copy()
-            # 记录中心点的物理残差
-            pos_res[c0:c1] = np.linalg.norm(e0[:, :3], axis=1) * 1000
-            rot_res[c0:c1] = np.linalg.norm(e0[:, 3:], axis=1) * 1000
-            tip_out[c0:c1] = out["tip"].reshape(m, 13, 3)[:, 0, :]
-            R_out[c0:c1] = curves[4][:, -1].reshape(m, 13, 3, 3)[:, 0, :, :]
-            now_conv = (pos_res[c0:c1] < tol_pos_mm) & (rot_res[c0:c1] < tol_rot_mrad)
-            newc = now_conv & ~done
-            n_it[c0:c1] = np.where(newc, it, n_it[c0:c1])
-            done = done | now_conv
-            if done.all():
-                break
-            # 批量 Levenberg 步
-            lam = 1e-3
-            H = np.einsum('nki,nkj->nij', J, J) + lam * np.eye(6)[None]
-            g = np.einsum('nki,nk->ni', J, e0)
-            try:
-                dy = -np.linalg.solve(H, g[..., None])[..., 0]
-            except np.linalg.LinAlgError:
-                dy = -np.einsum('nij,nj->ni', np.linalg.pinv(H), g)
-            dy = np.where(np.isfinite(dy), dy, 0.0)
-            why = np.linalg.norm(dy, axis=1)
-            dy[why > 1.0] *= (1.0 / why[why > 1.0])[:, None]
-            stalled = why < 1e-4
-            donow = done & ~stalled                       # 停滞视为到位 (流形最近点)
-            dy[donow] = 0.0
-            tau_c = np.clip(tau_c + dy, 0.0, 200.0)
-            n_it[c0:c1] = np.where(stalled & ~done, it, n_it[c0:c1])
-            done = done | stalled
-            if done.all():
-                break
-        tau[sl] = tau_c
-        if xh is not None:
-            xh[sl] = xh_c
-        conv[sl] = done
-        if verbose:
-            print(f"    批量牛顿 [{c1:>6}/{N}] 命中 {conv.sum()} "
-                  f"pos残差中位 {np.median(pos_res[c0:c1]):.2f} mm")
-
-    return {"tau": tau, "x": xh if xh is not None else np.zeros((N, 6)),
-            "tip": tip_out, "R_tip": R_out, "converged": conv, "n_iter": n_it,
-            "pos_res_mm": pos_res, "rot_res_mrad": rot_res}
 
 
 # ==================== 显示: 由 κ(s) 积分重建骨架 (§10.4/§10.8) ====================

@@ -157,8 +157,6 @@ def cmd_solve(a):
         rc = sol.get("reachability")
     if a.reach:
         feas = o.get("feasible", None)
-        need = o.get("need_N", None)
-        flo = o.get("floor_mm", None)
         proj = o.get("projected", None)
         if rc is None:
             print("\n── 可达性 ──")

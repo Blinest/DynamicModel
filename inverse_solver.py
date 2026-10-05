@@ -887,6 +887,24 @@ class LookupInverseSolver:
         def _n_of(ee):
             return float(np.hypot(float(np.linalg.norm(ee[:3])),
                                   float(np.linalg.norm(ee[3:])) * 0.1))
+        # ★ 2026-10-05 补: `best_tau`/`best_n` 原本**只写不读** —— 上面注释写着
+        #   "残差变差 → 回退到历史最优", 但循环里只记录、从未真正回退。
+        #   后果: 迭代末段几步变差时, 返回的是**当前** τ 而不是历史最优点
+        #   (仅当整体比热启动更差 5%+ 时才由下面的发散防护兜到 tau_start)。
+        #   这里补上真正的回退: 用**实测**确认历史最优确实更好才采用, 不会回归。
+        if proj is None and np.isfinite(best_n):
+            n_cur = _n_of(e)
+            if best_n < n_cur * 0.999:
+                cand = np.clip(np.asarray(best_tau, float).reshape(6),
+                               0.0, self.tau_max)
+                if not np.allclose(cand, tau):
+                    sol_c = M.shape(cand, x0=x)
+                    e_c = self.pose_residual(cand, p_des, R_des, sol=sol_c, model=M)
+                    if _n_of(e_c) < n_cur:
+                        tau, sol, e = cand, sol_c, e_c
+                        if verbose:
+                            print(f"  [回退] 采用历史最优 τ (残差 "
+                                  f"{n_cur:.3f} → {_n_of(e):.3f} mm)", flush=True)
         res_now = _n_of(e)
         res_start = (float(np.hypot(hist[0][0], hist[0][1] * 0.1)) if hist else res_now)
         diverged = bool(res_now > res_start * 1.05 + 0.2)
@@ -1327,7 +1345,6 @@ def fit_tau_predictor(records, basis, order=2):
     taus = np.array([r["tau"] for r in records])
     xs = np.array([r["x"] for r in records])
     _, _, cv = forward_batch(xs, taus, params, want_curve=True)
-    N = cv[2].shape[0]
     A = _modal_coeff(cv[2], basis)
     F = _feat(A, order, basis["r"])
     W, *_ = np.linalg.lstsq(F, taus, rcond=None)

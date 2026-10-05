@@ -13,9 +13,9 @@
 import sys
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
-from _jit_core import hat3s, solve6s, ortho3s, kbt3s, intermed_s  # noqa: F401
+from _jit_core import hat3s, ortho3s, kbt3s
 
 
 # ═════ 5') 六丝耦合 —— 可按 `wires` 取子集 (段B 只用 SEG_B) ═════
@@ -122,15 +122,29 @@ def anchor_s(u, v, R, anchor, na, tau6, ri_all, F, Lm):
 # ═════════════════════ S2: 全积分 (双层循环都在 JIT 内) ═════════════════════
 import os
 _FM = os.environ.get("JIT_FASTMATH", "1") == "1"   # 诊断用: JIT_FASTMATH=0 关掉
+# 并行线程数: TC_THREADS=N 显式指定; 未设置时用 numba 默认 (全部物理核)
+_T = os.environ.get("TC_THREADS", "").strip()
+if _T:
+    try:
+        import numba as _nb
+        _nb.set_num_threads(max(1, int(_T)))
+    except Exception as _e:      # 环境变量写错时不阻断, 退回默认线程数
+        import warnings as _w
+        _w.warn(f"[_jit_integrate] TC_THREADS={_T!r} 无效, 使用默认线程数: {_e}")
 
 
-@njit(cache=True, fastmath=_FM)
+@njit(cache=True, fastmath=_FM, parallel=True)
 def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
                   lat, rod_on, rod_free_len, wiresA, wiresB,
                   anchorA, anchorB, want_curve):
     """x:(N,6) tau:(N,6);  segA/segB:(6,)=[EI0,C0,L_strut,GJ,k_rod,GA].
 
     返回 res:(N,6|7), tip:(N,3), 以及 want_curve 时的 6 个曲线数组 + S.
+
+    ⚡ 样本循环用 `prange` 并行 (样本之间完全独立)。
+      · 所有会被写入的 scratch 缓冲必须在**循环体内**分配, 否则会被多线程共享 → 数据竞争;
+      · 只读数组 (E3/few/ri_all/wires*/anchor*/seg*) 在外层共享是安全的。
+      · 线程数用 `TC_THREADS` 环境变量控制 (见 `integrate()`), 不设则用 numba 默认。
     """
     N = x.shape[0]
     ncol = 7 if rod_on else 6
@@ -150,23 +164,24 @@ def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
         Cc = np.zeros((1, 1, 3)); Rc = np.zeros((1, 1, 3, 3))
         Nc = np.zeros((1, 1, 3)); Vc = np.zeros((1, 1, 3)); S = np.zeros(1)
 
-    Kse = np.zeros((3, 3)); Kbt = np.zeros((3, 3)); Kbtm = np.zeros((3, 3))
-    A = np.zeros((3, 3)); B = np.zeros((3, 3))
-    G = np.zeros((3, 3)); H = np.zeros((3, 3))
-    c = np.zeros(3); d = np.zeros(3)
-    A2 = np.zeros((3, 3)); B2 = np.zeros((3, 3))
-    G2 = np.zeros((3, 3)); H2 = np.zeros((3, 3))
-    c2 = np.zeros(3); d2 = np.zeros(3)
-    M = np.zeros((6, 6)); rhs = np.zeros(6); vu = np.zeros(6)
-    M2 = np.zeros((6, 6)); rhs2 = np.zeros(6); vu2 = np.zeros(6)
-    hh = np.zeros((3, 3)); hmid = np.zeros((3, 3))
-    Rmid = np.zeros((3, 3)); Tmp = np.zeros((3, 3)); Rtmp = np.zeros((3, 3))
-    fe_b = np.zeros(3)
-    Fs = np.zeros(3); Ls = np.zeros(3)
-    vm = np.zeros(3); um = np.zeros(3)
     I3 = np.eye(3)
 
-    for n in range(N):
+    for n in prange(N):
+        # ── 每样本私有 scratch (必须在此分配: 并行循环内不能共享可写缓冲) ──
+        Kse = np.zeros((3, 3)); Kbt = np.zeros((3, 3)); Kbtm = np.zeros((3, 3))
+        A = np.zeros((3, 3)); B = np.zeros((3, 3))
+        G = np.zeros((3, 3)); H = np.zeros((3, 3))
+        c = np.zeros(3); d = np.zeros(3)
+        A2 = np.zeros((3, 3)); B2 = np.zeros((3, 3))
+        G2 = np.zeros((3, 3)); H2 = np.zeros((3, 3))
+        c2 = np.zeros(3); d2 = np.zeros(3)
+        M = np.zeros((6, 6)); rhs = np.zeros(6); vu = np.zeros(6)
+        M2 = np.zeros((6, 6)); rhs2 = np.zeros(6); vu2 = np.zeros(6)
+        hh = np.zeros((3, 3)); hmid = np.zeros((3, 3))
+        Rmid = np.zeros((3, 3)); Tmp = np.zeros((3, 3)); Rtmp = np.zeros((3, 3))
+        fe_b = np.zeros(3)
+        Fs = np.zeros(3); Ls = np.zeros(3)
+        vm = np.zeros(3); um = np.zeros(3)
         v = np.empty(3); u = np.empty(3)
         for a in range(3):
             v[a] = x[n, a]; u[a] = x[n, 3 + a]
