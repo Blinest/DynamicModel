@@ -274,7 +274,8 @@ class SDMParams:
                  r_disk=R_DISK_DEFAULT, rhoA=0.0, disk_mass=0.0, n_p=30, n_d=30,
                  rod_free_len=None, rod_constraint=False,
                  lattice=True, C0=C0_DEFAULT, L_strut=L_STRUT_DEFAULT,
-                 EA=None, cells=None):
+                 EA=None, cells=None,
+                 mu_friction=0.0, friction_branch=1.0):
         if EA is not None:                      # 旧调用点兼容: EA → k_rod
             k_rod = float(EA)
         if GJ is None:                          # 抗扭: 圆截面基准取与弯曲同值
@@ -287,6 +288,12 @@ class SDMParams:
         self.rod_constraint = bool(rod_constraint)
         self.r_disk = r_disk; self.rhoA = rhoA; self.disk_mass = disk_mass
         self.n_p = n_p; self.n_d = n_d
+        # ── 肌腱摩擦 (Capstan 指数衰减) ──────────────────────────────
+        #   丝每转过包角 dφ=|κ|ds, 张力 T(s)=T0·exp(-μ·φ(s))。
+        #   mu_friction=0 → 无摩擦 (与旧版逐位一致); 典型 0.05~0.3。
+        #   friction_branch=+1 加载支 / -1 卸载支 (两者之差即滞回环宽度)。
+        self.mu_friction = float(mu_friction)
+        self.friction_branch = float(friction_branch)
         # 菱形晶胞非线性弯曲刚度: 开启后 EI 随曲率变化 (笔记原式, 无 seed/floor)
         self.lattice = lattice; self.C0 = C0; self.L_strut = L_strut
         # ── 分段晶胞: 段A / 段B 各一种菱形胞(只差周向胞数) ──
@@ -393,6 +400,17 @@ def forward(x, tau, F_tip, g_world, R_mount, params, want_curve=False):
     if not want_curve:
         curve_p = curve_s = curve_u = curve_m = curve_v = curve_n = None
 
+    # ── 肌腱摩擦 (Capstan): T(s) = T0·exp(-branch·μ·φ(s)), φ=∫|κ|ds ──
+    mu_f = float(getattr(params, "mu_friction", 0.0))
+    fbr = float(getattr(params, "friction_branch", 1.0))
+    phi = 0.0                              # 累积包角 (rad)
+
+    def _tau_of(phi_now):
+        """给定节点包角 → 各丝当地张力 (6,); μ=0 时原样返回 tau。"""
+        if mu_f == 0.0:
+            return tau
+        return tau * np.exp(-fbr * mu_f * phi_now)
+
     for k in (0, 1):
         Kse = params.Kse(k)
         Lseg = L1 if k == 0 else L2
@@ -407,8 +425,9 @@ def forward(x, tau, F_tip, g_world, R_mount, params, want_curve=False):
             fe_b = R.T @ fe_w
             # 菱形晶胞刚度 EI(|κ|) 随当前曲率变化
             Kbt = params.Kbt(k, kappa_xy=u[:2])
+            tau_eff = _tau_of(phi)                 # ★ 摩擦: 当地张力
             A_, B_, G_, H_, c_, d_ = intermedquant(
-                u, v, Kse, Kbt, wires, tau, params.r_disk, fe_b, np.zeros(3))
+                u, v, Kse, Kbt, wires, tau_eff, params.r_disk, fe_b, np.zeros(3))
             M = np.block([[Kse + A_, G_], [B_, Kbt + H_]])
             rhs = np.concatenate([d_, c_])
             dvdu = np.linalg.solve(M, rhs)
@@ -418,12 +437,14 @@ def forward(x, tau, F_tip, g_world, R_mount, params, want_curve=False):
             # 重新估中点右端(用 u_m,v_m) —— EI 也用中点曲率
             Kbt_m = params.Kbt(k, kappa_xy=u_m[:2])
             A2, B2, G2, H2, c2, d2 = intermedquant(
-                u_m, v_m, Kse, Kbt_m, wires, tau, params.r_disk,
+                u_m, v_m, Kse, Kbt_m, wires, tau_eff, params.r_disk,
                 R.T @ fe_w, np.zeros(3))
             M2 = np.block([[Kse + A2, G2], [B2, Kbt_m + H2]])
             vu2 = np.linalg.solve(M2, np.concatenate([d2, c2]))
             # 中心杆压缩: RK2 中点 (v_m 已含半步更新)
             Lz += ds * v_m[2]
+            if mu_f != 0.0:                        # ★ 包角累积 (RK2 中点)
+                phi += ds * float(np.hypot(u_m[0], u_m[1]))
             v = v + ds * vu2[:3]; u = u + ds * vu2[3:]
             # 刚性发散防护 (与 sdm_vc_batch 一致): 晶胞模型下牛顿试探步
             # 可能冲出物理量级, 不钳位会累积成非有限值 → SVD 不收敛。
@@ -449,13 +470,13 @@ def forward(x, tau, F_tip, g_world, R_mount, params, want_curve=False):
         Kse_end = Kse; Kbt_end = params.Kbt(k, kappa_xy=u[:2])
         # 段界跳(仅 k=0, 段A 锚丝止于 L1)
         if k == 0:
-            Fsig, Lsig = anchor_loads(u, v, R, SEG_A, tau, params.r_disk)
+            Fsig, Lsig = anchor_loads(u, v, R, SEG_A, _tau_of(phi), params.r_disk)
             v = v - np.linalg.solve(Kse, R.T @ Fsig)
             u = u - np.linalg.solve(Kbt_end, R.T @ Lsig)
     # 末端残差: 力/矩 (6 维, 方阵打靶)
     n_end = R @ (Kse_end @ (v - _E3))
     m_end = R @ (Kbt_end @ u)
-    Fsig, Lsig = anchor_loads(u, v, R, SEG_B, tau, params.r_disk)
+    Fsig, Lsig = anchor_loads(u, v, R, SEG_B, _tau_of(phi), params.r_disk)
     res = np.concatenate([n_end - Fsig - np.array(F_tip), m_end - Lsig])
     if want_curve:
         return res, (np.array(curve_p), np.array(curve_s),
@@ -926,6 +947,17 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
     fe_w = np.zeros((N, 3)); fe_w[:, 2] = -rho_total * 9.81
     rod_on = bool(getattr(params, "rod_constraint", False))
     Lz = np.zeros(N)                                  # 中心杆累计弧长 ∫v_z ds
+    # ── 肌腱摩擦 (Capstan 指数衰减): T(s) = T0·exp(-branch·μ·φ(s)) ──
+    #   μ=0 时 _tau_of() 直接返回原 tau ⇒ 结果与无摩擦版**逐位一致**。
+    mu_f = float(getattr(params, "mu_friction", 0.0))
+    fbr = float(getattr(params, "friction_branch", 1.0))
+    phi = np.zeros(N)                                 # 累积包角 ∫|κ|ds (rad)
+
+    def _tau_of(phi_now):
+        """给定节点的累积包角 → 该处各丝实际张力 (N,6)."""
+        if mu_f == 0.0:
+            return tau
+        return tau * np.exp(-fbr * mu_f * phi_now)[:, None]
     lat = getattr(params, "lattice", False)           # 菱形晶胞 EI(κ)
     L_strut = getattr(params, "L_strut", L_STRUT_DEFAULT)
     C0 = getattr(params, "C0", C0_DEFAULT)
@@ -997,7 +1029,8 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
             Kbt = _kbt(u)
             fe_b = (np.einsum('nji,nj->ni', R, fe_w))
             _im = _intermed_b_vec if _USE_VEC_INTERMED else _intermed_b
-            A, B, G, H, c, d = _im(u, v, Kse, Kbt, wires, tau, ri_all, fe_b)
+            tau_eff = _tau_of(phi)                    # ★ 摩擦: 用本节点处的实际张力
+            A, B, G, H, c, d = _im(u, v, Kse, Kbt, wires, tau_eff, ri_all, fe_b)
             M = np.zeros((N, 6, 6))
             M[:, :3, :3] = Kse + A; M[:, :3, 3:] = G
             M[:, 3:, :3] = B;       M[:, 3:, 3:] = Kbt + H
@@ -1007,7 +1040,7 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
             v_m = v + 0.5 * ds * dv; u_m = u + 0.5 * ds * du
             Kbt_m = _kbt(u_m)
             fe_b2 = (np.einsum('nji,nj->ni', R, fe_w))
-            A2, B2, G2, H2, c2, d2 = _im(u_m, v_m, Kse, Kbt_m, wires, tau,
+            A2, B2, G2, H2, c2, d2 = _im(u_m, v_m, Kse, Kbt_m, wires, tau_eff,
                                           ri_all, fe_b2)
             M2 = np.zeros((N, 6, 6))
             M2[:, :3, :3] = Kse + A2; M2[:, :3, 3:] = G2
@@ -1015,6 +1048,8 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
             rhs2 = np.concatenate([d2, c2], axis=1)
             vu2 = _safe_solve6(M2, rhs2)
             Lz += ds * v_m[:, 2]                      # 中心杆弧长 (RK2 中点)
+            if mu_f != 0.0:
+                phi = phi + ds * np.linalg.norm(u_m[:, :2], axis=1)   # ★ 包角累积
             v = v + ds * vu2[:, :3]
             u = u + ds * vu2[:, 3:]
             v = np.clip(v, -3.0, 3.0)                 # 刚性发散防护
@@ -1032,7 +1067,7 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
                 Vvf[:, idx] = v
                 idx += 1
         if k == 0:
-            Fs, Ls = _anchor_b(u, v, R, SEG_A, tau, ri_all)
+            Fs, Ls = _anchor_b(u, v, R, SEG_A, _tau_of(phi), ri_all)
             RFs = np.einsum('nji,nj->ni', R, Fs)
             RLs = np.einsum('nji,nj->ni', R, Ls)
             v = v - np.linalg.solve(Kse, RFs[..., None])[..., 0]
@@ -1040,7 +1075,7 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
 
     n_e = (R @ (Kse @ (v - _E3[None, :])[..., None]))[..., 0]
     m_e = (R @ (_kbt(u) @ u[..., None]))[..., 0]
-    Fs, Ls = _anchor_b(u, v, R, SEG_B, tau, ri_all)
+    Fs, Ls = _anchor_b(u, v, R, SEG_B, _tau_of(phi), ri_all)
     ft = np.zeros((N, 3)) if F_tip is None else np.tile(np.asarray(F_tip, float), (N, 1))
     res = np.concatenate([n_e - Fs - ft, m_e - Ls], axis=1)
     if rod_on:
@@ -1453,7 +1488,10 @@ class TendonCouplingModel:
         tau = np.asarray(tau, float).reshape(6)
         key = None
         if self.cache:
-            key = tau.round(9).tobytes()
+            # ★ 缓存键必须含摩擦参数: 否则改 mu_friction 会命中无摩擦的旧解
+            key = (tau.round(9).tobytes()
+                   + np.array([self.params.mu_friction,
+                               self.params.friction_branch]).tobytes())
             if key in self._c:
                 return self._c[key]
         sol = shooting(tau, self.params, F_tip=self.F_tip, g_world=self.g_world,

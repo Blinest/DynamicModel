@@ -136,7 +136,7 @@ if _T:
 @njit(cache=True, fastmath=_FM, parallel=True)
 def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
                   lat, rod_on, rod_free_len, wiresA, wiresB,
-                  anchorA, anchorB, want_curve):
+                  anchorA, anchorB, want_curve, mu_f=0.0, fbr=1.0):
     """x:(N,6) tau:(N,6);  segA/segB:(6,)=[EI0,C0,L_strut,GJ,k_rod,GA].
 
     返回 res:(N,6|7), tip:(N,3), 以及 want_curve 时的 6 个曲线数组 + S.
@@ -183,6 +183,9 @@ def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
         Fs = np.zeros(3); Ls = np.zeros(3)
         vm = np.zeros(3); um = np.zeros(3)
         v = np.empty(3); u = np.empty(3)
+        # ── 肌腱摩擦 (Capstan): T(s)=T0·exp(-branch·μ·φ(s)), φ=∫|κ|ds ──
+        phi = 0.0
+        tauw = np.empty(6)
         for a in range(3):
             v[a] = x[n, a]; u[a] = x[n, 3 + a]
         R = np.eye(3)
@@ -226,7 +229,14 @@ def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
                 for a in range(3):
                     fe_b[a] = R[0, a] * few[0] + R[1, a] * few[1] + R[2, a] * few[2]
                 kbt3s(u, lat, sEI, sGJ, sLs, Kbt)
-                intermed_w(u, v, Kse, Kbt, tau[n], ri_all, wires, W, fe_b, E3,
+                # ★ 摩擦: 本子步/本节点的实际张力 (μ=0 时即 tau[n], 与旧版逐位一致)
+                if mu_f != 0.0:
+                    for w in range(6):
+                        tauw[w] = tau[n, w] * np.exp(-fbr * mu_f * phi)
+                else:
+                    for w in range(6):
+                        tauw[w] = tau[n, w]
+                intermed_w(u, v, Kse, Kbt, tauw, ri_all, wires, W, fe_b, E3,
                            A, B, G, H, c, d)
                 for a in range(3):
                     for b in range(3):
@@ -240,7 +250,7 @@ def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
                     vm[a] = v[a] + 0.5 * ds * vu[a]
                     um[a] = u[a] + 0.5 * ds * vu[3 + a]
                 kbt3s(um, lat, sEI, sGJ, sLs, Kbtm)
-                intermed_w(um, vm, Kse, Kbtm, tau[n], ri_all, wires, W, fe_b, E3,
+                intermed_w(um, vm, Kse, Kbtm, tauw, ri_all, wires, W, fe_b, E3,
                            A2, B2, G2, H2, c2, d2)
                 for a in range(3):
                     for b in range(3):
@@ -251,6 +261,8 @@ def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
                     rhs2[a] = d2[a]; rhs2[3 + a] = c2[a]
                 solve6_lapack(M2, rhs2, vu2)
                 Lz += ds * vm[2]
+                if mu_f != 0.0:
+                    phi += ds * np.sqrt(um[0] ** 2 + um[1] ** 2)   # ★ 包角累积
                 for a in range(3):
                     v[a] += ds * vu2[a]
                     u[a] += ds * vu2[3 + a]
@@ -297,7 +309,7 @@ def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
                     idx += 1
 
             if k == 0:                       # 段A→段B 界面的锚丝修正
-                anchor_s(u, v, R, anchorA, anchorA.shape[0], tau[n], ri_all, Fs, Ls)
+                anchor_s(u, v, R, anchorA, anchorA.shape[0], tauw, ri_all, Fs, Ls)
                 for a in range(3):           # v -= Kse⁻¹ (Rᵀ Fs)
                     rr = R[0, a] * Fs[0] + R[1, a] * Fs[1] + R[2, a] * Fs[2]
                     v[a] -= rr / sGA if a < 2 else rr / sKR
@@ -322,7 +334,7 @@ def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
         mu = Kbt @ u
         for a in range(3):
             me[a] = R[a, 0] * mu[0] + R[a, 1] * mu[1] + R[a, 2] * mu[2]
-        anchor_s(u, v, R, anchorB, anchorB.shape[0], tau[n], ri_all, Fs, Ls)
+        anchor_s(u, v, R, anchorB, anchorB.shape[0], tauw, ri_all, Fs, Ls)
         for a in range(3):
             res[n, a] = ne[a] - Fs[a]
             res[n, 3 + a] = me[a] - Ls[a]
@@ -366,7 +378,9 @@ def pack_params(params):
                 rod_on=bool(getattr(params, "rod_constraint", False)),
                 rod_free_len=float(getattr(params, "rod_free_len", 1.0)),
                 wiresA=wiresA, wiresB=wiresB,
-                anchorA=anchorA, anchorB=anchorB)
+                anchorA=anchorA, anchorB=anchorB,
+                mu_f=float(getattr(params, "mu_friction", 0.0)),
+                fbr=float(getattr(params, "friction_branch", 1.0)))
 
 
 def integrate(x, tau, params, want_curve=False):
@@ -382,7 +396,7 @@ def integrate(x, tau, params, want_curve=False):
                         pr["few"], pr["L1"], pr["L2"], pr["n_p"], pr["n_d"],
                         pr["lat"], pr["rod_on"], pr["rod_free_len"],
                         pr["wiresA"], pr["wiresB"], pr["anchorA"], pr["anchorB"],
-                        bool(want_curve))
+                        bool(want_curve), pr["mu_f"], pr["fbr"])
     if not want_curve:
         return out[0], out[1]
     Pc, Uc, Cc, Rc, Nc, Vc, S = out[2:]

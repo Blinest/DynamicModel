@@ -1,0 +1,7 @@
+# DynamicModel — 运行依赖
+# 安装: python -m pip install -r requirements.txt
+numpy>=1.24            # 必需
+numba>=0.58            # 建议: JIT 加速 (缺失时自动回退纯 numpy, 可设 TC_NO_JIT=1 强制回退)
+matplotlib>=3.7        # 绘图 (plotting.py / tools/plot_*.py); 缺失时 tools/plot_friction.py 回退 Pillow
+pillow>=10             # tools/simpleplot.py 极简绘图后端 (matplotlib 缺失时的兜底)
+scipy>=1.10            # 可选: ik_table 的 KDTree 近邻加速 (缺失时自动退化为暴力搜索)
