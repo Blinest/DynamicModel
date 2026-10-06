@@ -370,6 +370,59 @@ class LookupInverseSolver:
             J[:, j] = (ep - em) / (2.0 * h)
         return J
 
+    @staticmethod
+    def _box_ls_floor(J, e, tau, tau_max):
+        """★ 判据 B: 箱约束最小二乘**真值** (见 docs/derivations/01_reachability_floor.md §4).
+
+            floor_qp = min_{tau' ∈ [0, tau_max]^6} || e + J (tau' - tau) ||
+
+        6 维下用**活跃集穷举 + KKT 号条件**求精确解 (3^6 = 729 种模式, 微秒级),
+        比 `reachability()` 原来的"最小范数方向等比缩放"更紧 —— 后者只是本题的
+        一个可行点, 因而是**保守上界** (证明见推导文档 命题 1)。
+
+        返回 (floor_qp, dtau_qp): dtau_qp = 最优的 tau 增量。
+        """
+        import itertools
+        tau = np.asarray(tau, float).reshape(6)
+        e = np.asarray(e, float).reshape(-1)
+        lo = -tau
+        hi = float(tau_max) - tau
+        best = None
+        for pat in itertools.product((0, 1, 2), repeat=6):    # 0=自由 1=下界 2=上界
+            free = [k for k in range(6) if pat[k] == 0]
+            d = np.zeros(6)
+            for k in range(6):
+                if pat[k] == 1:
+                    d[k] = lo[k]
+                elif pat[k] == 2:
+                    d[k] = hi[k]
+            if free:
+                Jf = J[:, free]
+                try:
+                    dz = -np.linalg.lstsq(Jf, e + J @ d, rcond=None)[0]
+                except np.linalg.LinAlgError:
+                    continue
+                for i, k in enumerate(free):
+                    d[k] = dz[i]
+            if np.any(d < lo - 1e-9) or np.any(d > hi + 1e-9):  # 不满足箱约束
+                continue
+            g = J.T @ (e + J @ d)                              # ½∇‖e+Jd‖²
+            ok = True
+            for k in range(6):                                 # KKT 号条件
+                if pat[k] == 1 and g[k] < -1e-7:
+                    ok = False
+                elif pat[k] == 2 and g[k] > 1e-7:
+                    ok = False
+            if not ok:
+                continue
+            val = float(np.linalg.norm(e + J @ d))
+            if best is None or val < best[0]:
+                best = (val, d.copy())
+        if best is None:                                       # 数值兜底
+            d = np.clip(-np.linalg.pinv(J) @ e, lo, hi)
+            return float(np.linalg.norm(e + J @ d)), d
+        return best[0], best[1]
+
     def reachability(self, tau, e, J=None, model=None, tol_frac=0.5):
         """**可达性判据** (线性化 + 执行器箱约束投影).
 
@@ -429,11 +482,19 @@ class LookupInverseSolver:
         #   被误判 feasible=False 且提前退出 ⇒ 直接把可解问题判死。
         #   ⇒ `feasible` 仅作**参考指标**(need/room/step_frac 一起看);
         #     只有 `blocked`(箱约束在本地**完全**阻断, s≈0) 才允许提前退出。
-        return {"need_N": need, "room_N": room, "now": n0, "floor": floor,
+        # ★ 判据 B: 箱-QP 真值 (更紧 ⇒ 更少误判"不可达"), 与判据 A 一起返回便于对比口径
+        floor_qp, dtau_qp = self._box_ls_floor(J, e, tau, self.tau_max)
+        return {"need_N": need, "room_N": room, "now": n0,
+                "floor": floor,                       # 判据 A (保守上界, 旧口径)
+                "floor_qp": floor_qp,                 # 判据 B (箱-QP 真值)
+                "dtau_qp": dtau_qp,
                 "step_frac": s, "ratio": (floor / n0 if n0 > 0 else 0.0),
+                "ratio_qp": (floor_qp / n0 if n0 > 0 else 0.0),
                 "saturated": sat, "tau_proj": tau_proj,
                 "blocked": bool(s <= 1e-9),
-                "feasible": bool(floor <= tol_frac * n0 + 1e-12)}
+                # feasible 用判据 B (紧), 同时保留 A 口径便于回看历史日志
+                "feasible": bool(floor_qp <= tol_frac * n0 + 1e-12),
+                "feasible_A": bool(floor <= tol_frac * n0 + 1e-12)}
 
     def _shoot_shared_jac(self, taus, x0, model=None, v_bound=3.0, u_bound=60.0):
         """⚡ S4: 中心 + 12 扰动**共享内层雅可比**的批量打靶.
