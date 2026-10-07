@@ -599,8 +599,11 @@ class LookupInverseSolver:
         """
         M = self.model if model is None else model
         tau = np.asarray(tau, float).reshape(6)
+        # ★ 2026-10-08 修: 原来这里算出的 xx0 只写不读, 实际传的是未整形的 x0
+        #   (`_solve_statics` → `shooting_batch` 内部自己 atleast_2d, 所以数值上
+        #    一直是对的, 但 (N,6) 这种误传会被静默取用第一行)。这里改为显式传 xx0。
         xx0 = None if x0 is None else np.asarray(x0, float).reshape(1, 6)
-        out, ok = self._solve_statics(tau[None, :], x0, model=M, max_iter=max_iter)
+        out, ok = self._solve_statics(tau[None, :], xx0, model=M, max_iter=max_iter)
         _, _, cv = forward_batch(out["x"], tau[None, :], M.params, want_curve=True)
         p = np.asarray(cv[0], float)[0, -1]
         R = np.asarray(cv[4], float)[0, -1]

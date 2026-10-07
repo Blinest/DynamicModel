@@ -347,8 +347,41 @@ def integrate_all(x, tau, ri_all, segA, segB, E3, few, L1, L2, n_p, n_d,
 
 
 # ═════════════════ 参数展平 (Python 侧, 一次性) ═════════════════
+_PACK_CACHE: dict = {}          # params 展平结果缓存 (键 = 参数签名)
+_PACK_CACHE_MAX = 64
+
+
+def _pack_signature(params):
+    """展平所需全部字段的签名: 任何一项变了签名就变 (避免拿到过期值)."""
+    cells = getattr(params, "cells", None) or []
+    c = []
+    for cc in (cells[0] if cells else None, cells[-1] if cells else None):
+        c += [None] if cc is None else [cc.EI0, cc.C0, cc.L_strut, cc.GJ, cc.k_rod]
+    return (
+        float(getattr(params, "r_disk", 0.0)), float(params.rhoA),
+        float(params.disk_mass), int(params.n_p), int(params.n_d),
+        bool(getattr(params, "lattice", False)), float(params.EI),
+        float(params.GA), float(params.k_rod), float(getattr(params, "GJ", 0.0)),
+        bool(getattr(params, "rod_constraint", False)),
+        float(getattr(params, "rod_free_len", 1.0)),
+        float(getattr(params, "C0", 0.0)), float(getattr(params, "L_strut", 0.0)),
+        float(getattr(params, "mu_friction", 0.0)),
+        float(getattr(params, "friction_branch", 1.0)),
+        len(cells), *[float(v) if v is not None else -1.0 for v in c],
+    )
+
+
 def pack_params(params):
-    """把 `params` 展平成 numba 可吃的标量/数组 (与 `forward_batch` 的取值一致)."""
+    """把 `params` 展平成 numba 可吃的标量/数组 (与 `forward_batch` 的取值一致).
+
+    ⚡ 结果按参数签名缓存: 一次 `shooting_batch` 会调 `forward_batch` 十几次以上,
+      每次重新展平要做 6 根丝的三角函数与十来个数组构造, 纯属重复劳动。
+      签名覆盖所有被展平的字段 ⇒ 改参数后自动失效, 不会拿到过期值。
+    """
+    sig = _pack_signature(params)
+    hit = _PACK_CACHE.get(sig)
+    if hit is not None:
+        return hit
     from tendon_coupling import (L, L1, L2, SEG_A, SEG_B, _E3, _wire_r_vec,
                                  L_STRUT_DEFAULT, C0_DEFAULT)
     ri_all = np.ascontiguousarray(_wire_r_vec(params.r_disk))
@@ -370,17 +403,21 @@ def pack_params(params):
     wiresB = np.asarray(list(SEG_B), dtype=np.int64)
     anchorA = np.asarray(list(SEG_A), dtype=np.int64)
     anchorB = np.asarray(list(SEG_B), dtype=np.int64)
-    return dict(ri_all=ri_all, segA=segA, segB=segB,
-                E3=np.asarray(_E3, float), few=few,
-                L1=float(L1), L2=float(L2),
-                n_p=int(params.n_p), n_d=int(params.n_d),
-                lat=bool(getattr(params, "lattice", False)),
-                rod_on=bool(getattr(params, "rod_constraint", False)),
-                rod_free_len=float(getattr(params, "rod_free_len", 1.0)),
-                wiresA=wiresA, wiresB=wiresB,
-                anchorA=anchorA, anchorB=anchorB,
-                mu_f=float(getattr(params, "mu_friction", 0.0)),
-                fbr=float(getattr(params, "friction_branch", 1.0)))
+    pr = dict(ri_all=ri_all, segA=segA, segB=segB,
+              E3=np.asarray(_E3, float), few=few,
+              L1=float(L1), L2=float(L2),
+              n_p=int(params.n_p), n_d=int(params.n_d),
+              lat=bool(getattr(params, "lattice", False)),
+              rod_on=bool(getattr(params, "rod_constraint", False)),
+              rod_free_len=float(getattr(params, "rod_free_len", 1.0)),
+              wiresA=wiresA, wiresB=wiresB,
+              anchorA=anchorA, anchorB=anchorB,
+              mu_f=float(getattr(params, "mu_friction", 0.0)),
+              fbr=float(getattr(params, "friction_branch", 1.0)))
+    if len(_PACK_CACHE) >= _PACK_CACHE_MAX:            # 简单容量控制
+        _PACK_CACHE.pop(next(iter(_PACK_CACHE)))
+    _PACK_CACHE[sig] = pr
+    return pr
 
 
 def integrate(x, tau, params, want_curve=False):
