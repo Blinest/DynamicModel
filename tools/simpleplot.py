@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import numpy as np
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
 SS = 2                                   # 超采样倍率
@@ -100,8 +101,10 @@ class Axes:
         for s in self.series:
             if s["kind"] in ("line", "fill"):
                 xs += s.get("x", []); xs += s.get("x0", []) if "x0" in s else []
-                if s["kind"] == "line": ys += s["y"]
-                else: ys += s["y1"] + s["y2"]
+                if s["kind"] == "line":
+                    ys += [v for v in s["y"] if np.isfinite(v)]
+                else:
+                    ys += [v for v in (s["y1"] + s["y2"]) if np.isfinite(v)]
         if not xs:
             return 0, 1, 0, 1
         x0, x1 = min(xs), max(xs); y0, y1 = min(ys), max(ys)
@@ -150,8 +153,12 @@ class Axes:
                 d.text((sx(s["x"]) + 3 * SS, sy(s["y"])), s["s"],
                        fill=s["color"], font=f)
             elif s["kind"] == "fill":
-                pts = [(sx(a), sy(b)) for a, b in zip(s["x"], s["y1"])] + \
-                      [(sx(a), sy(b)) for a, b in zip(s["x"][::-1], s["y2"][::-1])]
+                pairs = [(a, b1, b2) for a, b1, b2 in zip(s["x"], s["y1"], s["y2"])
+                         if np.isfinite(b1) and np.isfinite(b2)]
+                if len(pairs) < 3:          # 全部/几乎全为 NaN → 跳过, 不画垃圾面
+                    continue
+                pts = [(sx(a), sy(b1)) for a, b1, _ in pairs] + \
+                      [(sx(a), sy(b2)) for a, _, b2 in pairs[::-1]]
                 rgb = ImageColor.getrgb(_norm(s["color"], "#9467bd"))
                 rgba = Image.new("RGBA", d._image.size, (0, 0, 0, 0))
                 ImageDraw.Draw(rgba).polygon(pts, fill=rgb + (int(255 * s["alpha"]),))
@@ -161,7 +168,8 @@ class Axes:
                 d._image = self.fig.img
             else:
                 if s["ls"] in ("-", "--"):
-                    pts = [(sx(a), sy(b)) for a, b in zip(s["x"], s["y"])]
+                    pts = [(sx(a), sy(b)) for a, b in zip(s["x"], s["y"])
+                           if np.isfinite(a) and np.isfinite(b)]
                     step = 1
                     for i in range(len(pts) - 1):
                         if s["ls"] == "--" and (i // 2) % 2 == 1:
@@ -171,6 +179,8 @@ class Axes:
                 if s["marker"]:
                     r = s["ms"] * SS / 2
                     for a, b in zip(s["x"], s["y"]):
+                        if not (np.isfinite(a) and np.isfinite(b)):
+                            continue
                         cx, cy = sx(a), sy(b)
                         if s["marker"] == "s":
                             d.rectangle([cx - r, cy - r, cx + r, cy + r], fill=s["color"])

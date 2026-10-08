@@ -44,8 +44,14 @@ from tendon_coupling import (  # noqa: E402
 BASE_TAU = np.array([40.0, 20.0, 40.0, 20.0, 40.0, 10.0])   # 基准工况
 
 
-def solve(tau, mu, branch=1.0, nsub=100, want_curve=False):
-    """给定 τ (可批量) 求静力解 → (out, res, tip, curve)."""
+def solve(tau, mu, branch=1.0, nsub=100, want_curve=False, x0=None):
+    """给定 τ (可批量) 求静力解 → (out, res, tip, curve).
+
+    x0: 可选初值 (N,6)。**卸载支强烈建议用加载支的解热启动** ——
+        实测 (tools/check_hysteresis_grid.py): 冷启动在 nsub=30 时 1/7 点不收敛、
+        nsub=100 时 5/7 点不收敛, 环宽被垃圾解污染出现假跳变;
+        热启动后 0/7 未收敛, 环宽随 τ 单调递增, 迭代数也从 [4,5,5,-,8,9,10] 降到 [3,3,3,4,4,4,4]。
+    """
     M = TendonCouplingModel()
     P = M.params
     P.n_p = nsub
@@ -53,7 +59,7 @@ def solve(tau, mu, branch=1.0, nsub=100, want_curve=False):
     P.mu_friction = float(mu)
     P.friction_branch = float(branch)
     tau = np.atleast_2d(np.asarray(tau, float))
-    out = shooting_batch(tau, P, tol=1e-8, max_iter=12)
+    out = shooting_batch(tau, P, x0=x0, tol=1e-8, max_iter=12)
     fb = forward_batch(out["x"], tau, P, want_curve=want_curve)
     if want_curve:                      # want_curve=True → (res, tip, curves)
         res, tip, cv = fb
@@ -150,11 +156,16 @@ def main():
     # ── ⑤ / ⑥ 滞回环 ──
     s_grid = np.linspace(0.35, 1.0, 8)
     TAU = BASE_TAU[None, :] * s_grid[:, None]
-    tipL = solve(TAU, a.mu, +1.0, nsub=n)[2]
-    tipU = solve(TAU, a.mu, -1.0, nsub=n)[2]
-    tipF = solve(TAU, 0.0, +1.0, nsub=n)[2]
+    oL, _, tipL, _ = solve(TAU, a.mu, +1.0, nsub=n)
+    # ★ 卸载支以加载支的解热启动 (同一位形族): 冷启动会产生假跳变
+    oU, _, tipU, _ = solve(TAU, a.mu, -1.0, nsub=n, x0=oL["x"])
+    oF, _, tipF, _ = solve(TAU, 0.0, +1.0, nsub=n)
+    ok = np.asarray(oL["converged"]) & np.asarray(oU["converged"])
+    print(f"  滞回扫描收敛: {int(ok.sum())}/{len(s_grid)} 点 (未收敛点已从曲线剔除)")
     zL = (tipL[:, 2] - tipF[:, 2]) * 1000.0
     zU = (tipU[:, 2] - tipF[:, 2]) * 1000.0
+    if not ok.all():                     # 未收敛点不参与画线, 避免把垃圾解当物理
+        zL = np.where(ok, zL, np.nan); zU = np.where(ok, zU, np.nan)
 
     fig, ax = plt.subplots(1, 2, figsize=(11, 4.2))
     ax[0].fill_between(s_grid, zU, zL, alpha=.22, color="purple", label="hysteresis band")
@@ -166,10 +177,15 @@ def main():
     ax[1].set_xlabel("tau scale factor"); ax[1].set_ylabel("loop width  [mm]")
     ax[1].set_title("(6) Loop width = 2 x loading offset")
     ax[1].grid(alpha=.3)
+    w_ok = np.abs(zL - zU)
+    w_ok = w_ok[np.isfinite(w_ok)]
+    print(f"  收敛点环宽(mm): {np.round(w_ok, 4).tolist()} | 单调递增="
+          f"{bool(np.all(np.diff(w_ok) > -1e-3))}")
     fig.suptitle(f"Capstan hysteresis  ($\\mu$={a.mu}): max loop width = "
-                 f"{np.max(np.abs(zL-zU)):.4f} mm", fontsize=9)
+                 f"{np.nanmax(w_ok):.4f} mm", fontsize=9)
     fig.tight_layout(); fig.savefig("fig_friction_hysteresis.png", dpi=a.dpi); plt.close(fig)
-    print(f"saved fig_friction_hysteresis.png   max loop width = {np.max(np.abs(zL-zU)):.4f} mm")
+    print(f"saved fig_friction_hysteresis.png   max loop width = "
+          f"{np.nanmax(np.abs(zL - zU)):.4f} mm   (收敛 {int(ok.sum())}/{len(s_grid)} 点)")
 
     # ── ⑦ τ → z (不同 μ) ──
     fig, ax = plt.subplots(1, 1, figsize=(6, 4.4))
