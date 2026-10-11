@@ -1177,6 +1177,89 @@ def shooting_batch(taus, params, x0=None, tol=1e-8, max_iter=15, lam0=1e-3,
             "n_iter": n_iter, "inf": inf, "failed": failed}
 
 
+def branch_from_history(tau_prev, tau_now, prev_branch=1.0, deadband=1e-9):
+    """按 τ 变化方向自动选摩擦支 (加载 +1 / 卸载 -1)。
+
+    物理: 张力**上升** = 正在拉紧 ⇒ 加载支 T(s)=T0·exp(-μ·φ);
+          张力**下降** = 正在放松 ⇒ 卸载支 T(s)=T0·exp(+μ·φ)。
+    判据用整体变化量 (各分量之差的最大绝对值), 变化小于 deadband 时**保持上一支**
+    (原地不动不应翻转, 否则同一姿态会算出两个答案)。
+
+    Args:
+        tau_prev: 上一步的 τ (6,) 或 None
+        tau_now:  当前 τ (6,)
+        prev_branch: deadband 命中时沿用的支
+        deadband: 判定"没动"的阈值 (N)
+
+    Returns:
+        +1.0 或 -1.0
+    """
+    if tau_prev is None:
+        return float(prev_branch)
+    a = np.asarray(tau_prev, float).reshape(-1)
+    b = np.asarray(tau_now, float).reshape(-1)
+    n = min(a.size, b.size)
+    if n == 0:
+        return float(prev_branch)
+    # 用**总张力**的增减作为"拉紧/放松"的判据 (各分量同时变大 = 整体加载)
+    dn = float(np.linalg.norm(b[:n]) - np.linalg.norm(a[:n]))
+    if abs(dn) <= float(deadband):
+        return float(prev_branch)          # 没动 → 不翻转, 否则同一姿态会出现两个答案
+    return 1.0 if dn > 0.0 else -1.0
+
+
+def shooting_batch_path(taus, params, x0=None, tol=1e-8, max_iter=15,
+                        deadband=1e-9, verbose=False):
+    """沿一条 τ 轨迹**逐步**求解: 自动按历史选摩擦支 + 用上一步解热启动。
+
+    滞回实验的正确做法: 同一批 τ 按"升—降"顺序走, 每步的摩擦支由 τ 的变化方向决定,
+    而不是外部手填。本函数把这件事固化下来, 并复用上一步的解做初值 (实测收敛率显著更好)。
+
+    Args:
+        taus: (M, 6) 按时间顺序排列的张力序列
+        params: SDMParams (函数内部会临时改 friction_branch, 结束时恢复)
+        x0: 第一步的初值; 之后自动沿用上一步的解
+
+    Returns:
+        dict(branch=(M,), tip=(M,3), x=(M,6), converged=(M,), n_iter=(M,), res=(M,6|7))
+    """
+    taus = np.atleast_2d(np.asarray(taus, float))
+    M = taus.shape[0]
+    out_x = np.zeros((M, 6)); out_tip = np.zeros((M, 3))
+    out_conv = np.zeros(M, bool); out_nit = np.zeros(M, int)
+    out_br = np.zeros(M); res_first = None
+    orig_branch = float(getattr(params, "friction_branch", 1.0))
+    prev_tau = None; prev_x = None if x0 is None else np.asarray(x0, float).reshape(6)
+    cur = float(orig_branch)
+    try:
+        for k in range(M):
+            cur = branch_from_history(prev_tau, taus[k], cur, deadband)
+            params.friction_branch = cur
+            o = shooting_batch(taus[k:k + 1], params, x0=prev_x, tol=tol,
+                               max_iter=max_iter)
+            if not bool(o["converged"][0]):
+                # ★ 热启动失败 → 冷启动兜底重试, 取残差更小者 (与 build_table 同策略)
+                o2 = shooting_batch(taus[k:k + 1], params, x0=None, tol=tol,
+                                    max_iter=max_iter)
+                n1 = np.linalg.norm(np.asarray(o["res"][0], float))
+                n2 = np.linalg.norm(np.asarray(o2["res"][0], float))
+                if np.isfinite(n2) and (not np.isfinite(n1) or n2 < n1):
+                    o = o2
+            out_x[k] = o["x"][0]; out_tip[k] = o["tip"][0]
+            out_conv[k] = bool(o["converged"][0]); out_nit[k] = int(o["n_iter"][0])
+            out_br[k] = cur
+            if res_first is None:
+                res_first = np.asarray(o["res"][0], float)
+            prev_tau = taus[k]; prev_x = o["x"][0]
+            if verbose:
+                print(f"  [{k}] branch={cur:+.0f} n_iter={out_nit[k]} "
+                      f"tip={np.round(out_tip[k], 6)}", flush=True)
+    finally:
+        params.friction_branch = orig_branch          # 不留下副作用
+    return {"branch": out_br, "tip": out_tip, "x": out_x, "converged": out_conv,
+            "n_iter": out_nit}
+
+
 def shooting_batch_retry(taus, params, tol=1e-8, max_iter=15, n_try=3):
     """批量打靶 + 多起点重试: 对未收敛样本换初值再批量跑 (比标量兜底快得多).
 
@@ -1212,6 +1295,7 @@ __all__ = [
     "_E3", "hat", "integrate_shape", "integrate_shape_batch",
     "_L0_wire", "_wire_geom_len_batch",
     "forward_batch", "shooting_batch", "shooting_batch_retry",
+    "branch_from_history", "shooting_batch_path",
 ]
 
 
