@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sterelib import (  # noqa: E402
     rodrigues, inv_rodrigues, project, triangulate,
     curvature_from_points, curvature_valid_mask, resample_to_s,
-    kabsch, fit_kappa_gain,
+    kabsch, fit_kappa_gain, estimate_s_offset,
 )
 
 FAIL = []
@@ -170,13 +170,25 @@ G_TRUTH = 1.1
 s_m = np.linspace(0.0, L, 601)
 _, kap_m, _ = curvature_from_points(truth_shape(s_m), window=1)     # 模型侧干净
 kap_m = kap_m / G_TRUTH                                             # 模型偏软
-s_rec = curvature_from_points(P_first, WINDOW)[0]
-k_real_q = resample_to_s(s_rec, np.mean(
-    [curvature_from_points(observe(), WINDOW)[1] for _ in range(NFR)], axis=0), s_mark)[MSK]
+s_rec, _, _ = curvature_from_points(P_first, WINDOW)
+kap_meas = np.mean([curvature_from_points(observe(), WINDOW)[1] for _ in range(NFR)], axis=0)
+s_off_true = float(s_mark[0])
 k_model_q = resample_to_s(s_m, kap_m, s_mark)[MSK]
-fit = fit_kappa_gain(k_real_q, k_model_q, s=s_mark[MSK], seg_split=L1)
+# (a) 忽略弧长原点偏移: 实测 s 从 marker0 起算、模型 s 从基座起算 → 常数差
+fit_bad = fit_kappa_gain(resample_to_s(s_rec, kap_meas, s_mark)[MSK], k_model_q)
+# (b) 校正偏移 (工程上: marker0 贴基座面 ⇒ δ≈0, 或手工量出)
+fit = fit_kappa_gain(resample_to_s(s_rec + s_off_true, kap_meas, s_mark)[MSK],
+                     k_model_q, s=s_mark[MSK], seg_split=L1)
+# (c) 由数据反推偏移 (弱可辨识, 只做量级核验)
+d_hat, _, _ = estimate_s_offset(s_rec, kap_meas, s_m, kap_m, max_off=0.06)
+ratio = fit_bad["rmse_raw"] / max(fit["rmse_raw"], 1e-12)
+print(f"[5] 弧长原点偏移 δ: 真值 {s_off_true*1e3:.1f} mm, 反推 {d_hat*1e3:.1f} mm (弱可辨识)")
+print(f"     未校正 δ 的 RMSE = {fit_bad['rmse_raw']:.4f} → 校正后 {fit['rmse_raw']:.4f} (放大 {ratio:.2f}×)")
 print(f"[5] 增益拟合: g={fit['g']:.4f} (真值 {G_TRUTH})  gA={fit['gA']:.4f}  gB={fit['gB']:.4f}")
 print(f"     RMSE {fit['rmse_raw']:.4f} → {fit['rmse_fit']:.4f} 1/m ; EI 缩放 1/g = {fit['ei_scale']:.4f}")
+check("δ 反推与真值同量级 (<15 mm)", abs(d_hat - s_off_true) < 0.015,
+      f"Δ={abs(d_hat-s_off_true)*1e3:.1f} mm")
+check("不校正 δ 会放大残差 (>1.3×)", ratio > 1.3, f"{ratio:.2f}×")
 check("整体增益 g 恢复 3% 内", abs(fit["g"] - G_TRUTH) / G_TRUTH < 0.03)
 check("分段增益 A/B 各恢复 8% 内",
       abs(fit["gA"] - G_TRUTH) / G_TRUTH < 0.08 and abs(fit["gB"] - G_TRUTH) / G_TRUTH < 0.08)
