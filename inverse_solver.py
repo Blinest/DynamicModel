@@ -36,6 +36,8 @@ inverse_solver.py — 肌腱逆解模型 (Tendon Inverse Model, TIM)
     L = LookupInverseSolver(path="vc_table_40.npz")
     L.solve_pose(p_des, R_des)                     # 查表定位 + 模型精化
 """
+import copy
+
 import numpy as np
 
 from tendon_coupling import (TendonCouplingModel, TendonCouplingResult,
@@ -46,7 +48,8 @@ from ik_table import (PoseTable, load_table, so3_log,
                       default_params, _L0_wire, _wire_geom_len_batch)
 from tendon_coupling import integrate_shape_batch            # 几何积分 (已下沉内核)
 from tendon_coupling import (forward_batch,        # 全阶正解 (建基快照用)
-                             shooting_batch)       # ★ 批量打靶 (位姿雅可比提速)
+                             shooting_batch,       # ★ 批量打靶 (位姿雅可比提速)
+                             branch_from_history)  # ★ E: 摩擦支按 τ 历史 (逆解接入)
 
 __all__ = ["LookupInverseSolver", "PODReducedOrderModel",
            "solve_tendon_forces", "solve_pose", "make_inverse_solver"]
@@ -91,6 +94,12 @@ class LookupInverseSolver:
         self.pod_order = int(pod_order)
         self.pod_nsub = int(pod_nsub)
         self._pod = None                    # (basis, tsp) 惰性构建
+        # ── ★ E (2026-10-13): 摩擦支按 τ 历史自动选支 —— **默认开** ──
+        #   逆解迭代中 τ 会来回走; 若支被固定/每轮独立判断, 同一 τ 在不同轮
+        #   会给出不同位姿 ⇒ 线搜索与雅可比被污染 (实测两支 |Δtip| = 2.3 mm,
+        #   max|ΔJ| = 0.51)。μ=0 时该开关自动失效 ⇒ 与原实现逐位一致
+        #   (已验证 max|Δτ| = 0)。需要旧行为时显式传 friction_track=False。
+        self.friction_track = True
         # ── S4 共享雅可比路径的诊断计数 (2026-09-27 加) ──
         self.n_sj_ok = 0          # _shoot_shared_jac 直接成功 (快路径)
         self.n_sj_fallback = 0    # 回退到 _solve_statics 自适应重试链 (慢路径)
@@ -496,7 +505,8 @@ class LookupInverseSolver:
                 "feasible": bool(floor_qp <= tol_frac * n0 + 1e-12),
                 "feasible_A": bool(floor <= tol_frac * n0 + 1e-12)}
 
-    def _shoot_shared_jac(self, taus, x0, model=None, v_bound=3.0, u_bound=60.0):
+    def _shoot_shared_jac(self, taus, x0, model=None, v_bound=3.0, u_bound=60.0,
+                          params=None):
         """⚡ S4: 中心 + 12 扰动**共享内层雅可比**的批量打靶.
 
         问题（已定量）: `shooting_batch(N=13)` 每 LM 迭代要 13 次 `forward_batch`,
@@ -513,7 +523,7 @@ class LookupInverseSolver:
         返回 (x (M,6), converged (M,), J (nx,6) 中心雅可比)
         """
         M = self.model if model is None else model
-        P = M.params
+        P = M.params if params is None else params
         taus = np.atleast_2d(np.asarray(taus, float))
         Mrow = taus.shape[0]
         lo = -np.array([v_bound] * 3 + [u_bound] * 3)
@@ -566,7 +576,7 @@ class LookupInverseSolver:
         return x_all, ok_all, J
 
     def _solve_statics(self, taus, x0, model=None, tol=1e-8, max_iter=2,
-                       hard_cap=12):
+                       hard_cap=12, params=None):
         """解静力学并**保证(或至少知道)收敛**.
 
         ⚠ 这是本轮定位到的根因: `shooting_batch` 在偏离热启动较远时会
@@ -585,13 +595,14 @@ class LookupInverseSolver:
             xx0 = np.tile(xx0[None, :], (taus.shape[0], 1))
         mi = max(int(max_iter), 1)
         while True:
-            out = shooting_batch(taus, M.params, x0=xx0, tol=tol, max_iter=mi)
+            out = shooting_batch(taus, M.params if params is None else params,
+                                 x0=xx0, tol=tol, max_iter=mi)
             ok = bool(np.all(out["converged"]))
             if ok or mi >= hard_cap:
                 return out, ok
             mi = min(mi * 4, int(hard_cap))
 
-    def _pose_eval(self, tau, p_des, R_des, x0, model=None, max_iter=2):
+    def _pose_eval(self, tau, p_des, R_des, x0, model=None, max_iter=2, params=None):
         """廉价(仅前向)位姿评估 —— 线搜索专用.
 
         与 `pose_jacobian_batch` 的区别: **只解一个 τ**(1 样本), 不做 12 个扰动差分,
@@ -603,8 +614,10 @@ class LookupInverseSolver:
         #   (`_solve_statics` → `shooting_batch` 内部自己 atleast_2d, 所以数值上
         #    一直是对的, 但 (N,6) 这种误传会被静默取用第一行)。这里改为显式传 xx0。
         xx0 = None if x0 is None else np.asarray(x0, float).reshape(1, 6)
-        out, ok = self._solve_statics(tau[None, :], xx0, model=M, max_iter=max_iter)
-        _, _, cv = forward_batch(out["x"], tau[None, :], M.params, want_curve=True)
+        out, ok = self._solve_statics(tau[None, :], xx0, model=M, max_iter=max_iter,
+                                      params=params)
+        _, _, cv = forward_batch(out["x"], tau[None, :],
+                                 M.params if params is None else params, want_curve=True)
         p = np.asarray(cv[0], float)[0, -1]
         R = np.asarray(cv[4], float)[0, -1]
         e = np.concatenate([(p - p_des) * 1000.0, so3_log(R_des.T @ R) * 1000.0])
@@ -615,7 +628,8 @@ class LookupInverseSolver:
                "converged": bool(ok)}
         return e, sol, bool(ok)
 
-    def pose_jacobian_batch(self, tau, h=None, x0=None, model=None, max_iter=2):
+    def pose_jacobian_batch(self, tau, h=None, x0=None, model=None, max_iter=2,
+                            params=None):
         """⚡ 一次 `shooting_batch` **同时**得到基态解与 6×6 位姿雅可比.
 
         原实现每次迭代要: ① 标量 `shape()` 求基态 (~40 s, Levenberg 最多 60 迭代)
@@ -649,17 +663,17 @@ class LookupInverseSolver:
         from time import perf_counter as _pc
         _t0 = _pc()
         x_all, ok_all_arr, _Jc = self._shoot_shared_jac(
-            taus, np.asarray(x0, float), model=M)
+            taus, np.asarray(x0, float), model=M, params=params)
         self.t_sj += _pc() - _t0
         ok_all = bool(np.all(ok_all_arr))
         if not ok_all:                    # 仅在共享雅可比**真失败**时回退(不应常触发)
             self.n_sj_fallback += 1
             _t1 = _pc()
             out_c, ok_c = self._solve_statics(tau[None, :], np.asarray(x0, float)[None, :],
-                                              model=M, max_iter=max_iter)
+                                              model=M, max_iter=max_iter, params=params)
             xc = out_c["x"][0]
             out_p, ok_p = self._solve_statics(taus[1:], np.tile(xc, (12, 1)), model=M,
-                                              max_iter=max_iter)
+                                              max_iter=max_iter, params=params)
             x_all = np.vstack([out_c["x"], out_p["x"]])
             ok_all = bool(ok_c and ok_p)
             self.t_fb += _pc() - _t1
@@ -668,7 +682,8 @@ class LookupInverseSolver:
         out = {"x": x_all,
                "converged": np.atleast_1d(ok_all_arr) if len(ok_all_arr) == len(taus)
                             else np.ones(len(taus), bool)}
-        _, _, cv = forward_batch(out["x"], taus, M.params, want_curve=True)
+        _, _, cv = forward_batch(out["x"], taus,
+                                 M.params if params is None else params, want_curve=True)
         Pc = np.asarray(cv[0], float); Rc = np.asarray(cv[4], float)
         p0 = Pc[0, -1]; R0 = Rc[0, -1]
         J = np.zeros((6, 6))
@@ -755,7 +770,7 @@ class LookupInverseSolver:
                      tol_pos_mm=0.05, tol_rot_mrad=0.5, lam=1e-4,
                      verbose=False, refine_n=None, jac_every=2, trust_mm=2.0,
                      tau_step_norm=50.0, stop_infeasible=False, usable_mm=2.0,
-                     trust_far_mm=8.0):
+                     trust_far_mm=8.0, friction_track=None):
         """纯模型位姿牛顿 (查表命中时也走这里做精化).
 
         refine_n : 精化网格 n_p=n_d (None → 表分辨率)
@@ -790,10 +805,32 @@ class LookupInverseSolver:
         best_tau = tau.copy(); best_n = np.inf
         reach = None
         proj = None                              # ★ 用途2: 投影解 (最近可达 τ)
+        # ── ★ E (2026-10-12): 摩擦支按 τ 轨迹的历史选定 ──────────────────
+        #   逆解迭代里 τ 会来回走; 若支由手填的固定值决定/或每轮独立判断,
+        #   同一 τ 在不同轮会给出**不同位姿** ⇒ 线搜索与雅可比都被污染.
+        #   这里: 每轮迭代从 (上一轮 τ → 本轮 τ) 判支, 并让**本轮所有评估**
+        #   (中心点 + 12 个 ±h 扰动 + 线搜索候选) 共用同一支 —— 扰动不是加载路径,
+        #   绝不能让 ±h 自己翻转支 (否则 J 完全失真).
+        #   μ=0 时 track=False ⇒ 不拷贝 params、不写入, 行为与原实现**逐位一致**.
+        P0 = M.params
+        track = ((getattr(self, "friction_track", False) if friction_track is None
+                  else bool(friction_track))
+                 and float(getattr(P0, "mu_friction", 0.0)) != 0.0)
+        br = float(getattr(P0, "friction_branch", 1.0))
+        tau_prev = tau.copy()
+        branch_hist = []
+        self.branch_hist = branch_hist           # 同一对象: 任何 return 路径都能读到
         it = 0
         for it in range(max_iter):
+            P_it = None                          # 本轮共用的 params (含固定支)
+            if track:
+                br = float(branch_from_history(tau_prev, tau, br))
+                P_it = copy.copy(P0)
+                P_it.friction_branch = br
+                branch_hist.append(br)
+            tau_prev = tau.copy()
             # ⚡ 一次批量调用同时拿基态解 + 雅可比 (替代"标量 shape + 批量差分")
-            Jb, sol = self.pose_jacobian_batch(tau, x0=x, model=M)
+            Jb, sol = self.pose_jacobian_batch(tau, x0=x, model=M, params=P_it)
             if not bool(sol.get("converged", True)):
                 self._nconv = getattr(self, "_nconv", 0) + 1
                 if verbose:
@@ -824,7 +861,8 @@ class LookupInverseSolver:
                     #     得 Δp=24.41 mm, 而热启动仅 7.07 mm ⇒ 投影只在
                     #     **确实改善**时采用, 否则保留热启动(绝不回归)。
                     cand = np.asarray(reach["tau_proj"], float)
-                    e_c, _sc, ok_c = self._pose_eval(cand, p_des, R_des, x, model=M)
+                    e_c, _sc, ok_c = self._pose_eval(cand, p_des, R_des, x, model=M,
+                                                     params=P_it)
                     n_c = float(np.hypot(np.linalg.norm(e_c[:3]),
                                          np.linalg.norm(e_c[3:]) * 0.1))
                     if ok_c and n_c < n_tot:
@@ -905,7 +943,8 @@ class LookupInverseSolver:
                 t_c = np.clip(tau + al * dtau, 0.0, self.tau_max)
                 if np.allclose(t_c, tau):
                     continue
-                e2, sol2, ok2 = self._pose_eval(t_c, p_des, R_des, x, model=M)
+                e2, sol2, ok2 = self._pose_eval(t_c, p_des, R_des, x, model=M,
+                                                params=P_it)
                 if not ok2:
                     if verbose:
                         print(f"    ls α={al:.2f}: 静力学未收敛 → 跳过该步", flush=True)
