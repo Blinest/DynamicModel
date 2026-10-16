@@ -215,9 +215,16 @@ def _assemble(Kse, Kbt, A, B, G, H, c, d):
     return M, r
 
 
-def stage_f_jac(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs):
-    """返回 (f(6,), df_dy(6,6))。y = [u;v]（⚠ 注意本文件内部 y 的前 3 维是 u）。"""
-    u = np.asarray(y, float)[:3]; v = np.asarray(y, float)[3:]
+def _stage_core(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs):
+    """阶段函数核心：返回 (f, ∂f/∂y, ∂f/∂fe_b)。
+
+    ★ ∂f/∂fe_b 是个**容易漏掉**的项：`c` 与 `d` 里都含 `−fe_b`，
+      而 `fe_b = Rᵀ·fe_w` 又依赖 R ⇒ 依赖 x₀。若不把这条链传播下去，
+      雅可比会有 ~1e-3 的确定性偏差（实测 1.3e-3）。
+      c,d 对 fe_b 是线性的 ⇒ ∂r/∂fe_b = −[I;I]，故 ∂f/∂fe_b = −M⁻¹·[I;I]。
+    """
+    y = np.asarray(y, float)
+    u = y[:3]; v = y[3:]
     Kbt = kbt(u, lat, sEI, sGJ, sLs)
     A, B, G, H, c, d = intermed(u, v, Kse, Kbt, tau_w, ri_w, fe_b)
     M, r = _assemble(Kse, Kbt, A, B, G, H, c, d)
@@ -231,7 +238,20 @@ def stage_f_jac(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs):
     dr = np.zeros((6, 6))
     dr[:3, :] = dd; dr[3:, :] = dc
     # ∂f/∂y = M⁻¹ (∂r/∂y − (∂M/∂y)·f)
+    df = np.empty((6, 6))
     for k in range(6):
-        rhs = dr[:, k] - dM[:, :, k] @ f
-        dr[:, k] = np.linalg.solve(M, rhs)
-    return f, dr
+        df[:, k] = np.linalg.solve(M, dr[:, k] - dM[:, :, k] @ f)
+    # ∂f/∂fe_b = M⁻¹ · ∂r/∂fe_b,  ∂r/∂fe_b = −[I₃;I₃]
+    df_dfe = -np.linalg.solve(M, np.vstack([np.eye(3), np.eye(3)]))
+    return f, df, df_dfe
+
+
+def stage_f_jac(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs):
+    """返回 (f(6,), df_dy(6,6))。y = [u;v]（⚠ 本文件内部 y 的前 3 维是 u）。"""
+    f, df, _ = _stage_core(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs)
+    return f, df
+
+
+def stage_f_jac3(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs):
+    """返回 (f, df_dy, df_dfe)，供变分传播用（要 fe_b 那条链）。"""
+    return _stage_core(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs)

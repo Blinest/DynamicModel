@@ -118,7 +118,47 @@ $$
    若用它**自身**的 max 归一化，会报出 1.95e-5 的"相对误差"；改用 $K_{bt}$ 的尺度
    归一化后是 1.4e-10。**导数对拍要按被求导函数本身的尺度归一化。**
 
-## 5. 尚未做（下一步）
+## 5. 阶段 2：变分传播到 ∂res/∂x₀ 与 ∂tip/∂x₀（2026-10-16 完成）
+
+实现：`tools/varjac/res_jac.py`（镜像 `forward_batch_ref` 的积分，同时传播
+$\Phi=\partial(v,u)/\partial x_0$、$\partial R/\partial x_0$、$\partial L_z/\partial x_0$、$\partial p/\partial x_0$）
+
+### 5.1 结果
+
+| 检查（`tools/varjac/check_res_jac.py`，n_p=n_d=30） | 相对差 |
+| --- | --- |
+| ① 镜像积分的 res/tip 值 | 3.8e-15 |
+| ② $\partial res/\partial x_0$ vs 中心差分 | **1.7e-8** |
+| ③ $\partial tip/\partial x_0$ vs 中心差分 | **4.0e-9** |
+
+nsub 扫描（同一 x₀）：1 → 3.0e-9；15 → 1.1e-8；30 → 4.9e-9；60 → 4.2e-9。
+
+### 5.2 根因：`ortho_jac` 多除了一次范数
+
+症状极具误导性：**直杆 x₀ 通过（1.5e-8），一偏离直杆就错到 1.3e-3**。
+
+根因在 Gram–Schmidt 的导数：
+
+$$
+\frac{\partial |a|}{\partial x}=\frac{a\cdot\partial a}{|a|}=b\cdot\partial a
+\qquad	ext{（原实现写成 } (b\cdot\partial a)/|a|	ext{，多除一个范数）}
+$$
+
+**这个错误在 $|a|=1$ 时恰好为零** —— 而直杆构型下 $R\equiv I$、$n_0=n_1=1$，
+所以只有偏离直杆才暴露。这一条是"为什么直杆测试会骗人"的最好例子。
+
+判定手段（按性价比）：**单子步对拍**。若每步的解析导数精确，复合必然精确；
+nsub=1 时误差 88%（相对），直接锁定为"每步链式错误"而非"累积误差"。
+再用 FD 版 `ortho_jac` 做二分：nsub=1 时 88% → 1.17e-5（改善 7.5 万倍）⇒ 定位成功。
+修掉两处除法后，单步 88% → 3.0e-9。
+
+### 5.3 一个必须写下来的坑：nsub 太小的对拍无意义
+
+nsub=2–8 时状态会撞 ±3 / ±80 钳位，钳位处导数不连续、且误差被混沌放大
+⇒ 该工况下 res 的**值本身**就差 1.9e3（不是雅可比的锅），任何对拍都是噪声。
+对拍必须用 nsub ≥ 15 的稳定区。
+
+## 6. 尚未做（下一步）
 
 1. **变分传播**：由 $\partial f/\partial y$ 积分出 $\Phi$，得 $\partial(v,u)/\partial x_0$
 2. **$\partial R/\partial x_0$**：$R\leftarrow R(I+ds\,\hat u)$ 后还要 `ortho3s` 正交化；
