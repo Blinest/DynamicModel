@@ -1089,6 +1089,83 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
 
 # ---------------- 批量 Levenberg 打靶 ----------------
 
+_RES_JAC_CACHE = {}
+
+
+def _load_res_jac():
+    """按绝对路径加载 `tools/varjac/res_jac.py`（不依赖 `tools` 是否为 package）。
+
+    返回 `res_jac(x0, tau6, params, F_tip=None)` → (res, tip, Jres, Jtip)，失败返回 None。
+    """
+    if "f" in _RES_JAC_CACHE:
+        return _RES_JAC_CACHE["f"]
+    fn = None
+    try:
+        import importlib.util
+        import os as _os2
+        path = _os2.path.join(_os2.path.dirname(_os2.path.abspath(__file__)),
+                              "tools", "varjac", "res_jac.py")
+        if _os2.path.exists(path):
+            spec = importlib.util.spec_from_file_location("_varjac_res_jac", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            fn = mod.res_jac
+    except Exception:
+        fn = None
+    _RES_JAC_CACHE["f"] = fn
+    return fn
+
+
+def _can_analytic(params, na):
+    """解析雅可比（`TC_JAC_MODE=analytic`）是否可用。
+
+    当前限制（详见 `docs/derivations/03_analytic_sensitivity.md`）：
+      · 只支持**单样本**（解析实现尚未向量化；批量仍走差分）
+      · 不支持摩擦：µ≠0 时 τ_w 依赖累积包角 φ(u)，∂τ/∂y ≠ 0
+      · 不支持端部外力 F_tip
+    任一不满足即自动回退差分路径，并只提示一次。
+    """
+    if na != 1:
+        return False
+    if float(getattr(params, "mu_friction", 0.0) or 0.0) != 0.0:
+        return False
+    if getattr(params, "F_tip", None) is not None:
+        return False
+    return _load_res_jac() is not None
+
+
+_JAC_FALLBACK_WARNED = []
+
+
+def _jac_diff(xa, ta, ra, params, mode=None, h=1e-6):
+    """有限差分雅可比 J(N,nx,6)。mode='forward' 6 次正解 / 'central' 12 次。
+
+    原实现内联在 `shooting_batch` 里；2026-10-17 抽成函数，供解析路径的回退共用。
+    ⚠ 复用缓冲时必须复位被扰动的那一列，否则下一分量会带上本轮扰动（经典坑）。
+    """
+    md = _JAC_MODE if mode is None else mode
+    na = xa.shape[0]; nx = ra.shape[1]
+    J = np.zeros((na, nx, 6))
+    if md == "forward":
+        xp = xa.copy()
+        for c in range(6):
+            xp[:, c] = xa[:, c] + h
+            rp, _ = forward_batch(xp, ta, params)
+            J[:, :, c] = (rp - ra) / h
+            xp[:, c] = xa[:, c]
+    else:
+        xp = xa.copy(); xm = xa.copy()
+        for c in range(6):
+            xp[:, c] = xa[:, c] + h
+            xm[:, c] = xa[:, c] - h
+            rp, _ = forward_batch(xp, ta, params)
+            rm, _ = forward_batch(xm, ta, params)
+            J[:, :, c] = (rp - rm) / (2 * h)
+            xp[:, c] = xa[:, c]
+            xm[:, c] = xa[:, c]
+    return J
+
+
 def shooting_batch(taus, params, x0=None, tol=1e-8, max_iter=15, lam0=1e-3,
                    v_bound=3.0, u_bound=60.0):
     """批量打靶. taus (N,6) → 每样本 {x=[v0,u0], res, converged, n_iter, tip}.
@@ -1121,26 +1198,22 @@ def shooting_batch(taus, params, x0=None, tol=1e-8, max_iter=15, lam0=1e-3,
         xa = x[idx]; ta = taus[idx]; ra = res[idx]
         nx = res.shape[1]
         J = np.zeros((na, nx, 6)); h = 1e-6
-        if _JAC_MODE == "forward":
-            # 前向差分: 6 次正解 (中心差分要 12 次)。雅可比精度降到 O(h),
-            # 但 LM 只用它定下降方向 ⇒ 实测收敛结果一致, 迭代次数略增或无变化。
-            xp = xa.copy()
-            for c in range(6):
-                xp[:, c] = xa[:, c] + h
-                rp, _ = forward_batch(xp, ta, params)
-                J[:, :, c] = (rp - ra) / h
-                xp[:, c] = xa[:, c]          # 复位该列 (复用缓冲)
+        if _JAC_MODE == "analytic" and _can_analytic(params, na):
+            # ★ 2026-10-17: 解析雅可比 (变分方程) —— 一次 6×6 敏感度传播替掉 6/12 次全量正解。
+            #   单样本专用; 结果与差分**不逐位相同**(LM 轨迹不同), 收敛点一致。
+            _rj = _load_res_jac()
+            for _r in range(na):
+                J[_r] = np.asarray(_rj(xa[_r], ta[_r], params)[2], float)
         else:
-            xp = xa.copy(); xm = xa.copy()               # 复用缓冲, 不再每分量 copy 两次
-            for c in range(6):
-                xp[:, c] = xa[:, c] + h
-                xm[:, c] = xa[:, c] - h
-                rp, _ = forward_batch(xp, ta, params)
-                rm, _ = forward_batch(xm, ta, params)
-                J[:, :, c] = (rp - rm) / (2 * h)
-                # ⚠ 必须复位该列, 否则下一分量会带上本轮扰动 (复用缓冲的经典坑)
-                xp[:, c] = xa[:, c]
-                xm[:, c] = xa[:, c]
+            if _JAC_MODE == "analytic" and not _JAC_FALLBACK_WARNED:
+                _JAC_FALLBACK_WARNED.append(True)
+                _warnings.warn(
+                    f"[tendon_coupling] TC_JAC_MODE=analytic 不适用当前工况 "
+                    f"(na={na}, mu={getattr(params,'mu_friction',0.0)}, "
+                    f"F_tip={getattr(params,'F_tip',None) is not None}, "
+                    f"res_jac={'OK' if _load_res_jac() else '不可用'}) → 回退差分路径。",
+                    RuntimeWarning, stacklevel=2)
+            J = _jac_diff(xa, ta, ra, params)
         J = np.where(np.isfinite(J), J, 0.0)
         H = np.einsum('nki,nkj->nij', J, J)
         H += lam[idx][:, None, None] * np.eye(6)[None]
