@@ -184,7 +184,7 @@ def cell_n_long(r_i=R_DISK_DEFAULT, alpha_deg=ALPHA_CELL_DEG, L=None,
 
 def cell_stiffness(E=E_MAT_DEFAULT, A=A_STRUT_DEFAULT, N_circ=N_CIRC_DEFAULT,
                    N_long=None, r_i=R_DISK_DEFAULT, L=None,
-                   alpha_deg=ALPHA_CELL_DEG):
+                   alpha_deg=ALPHA_CELL_DEG, t_strut=None):
     """由晶胞材料/几何参数推出全套刚度 (k_unit, alpha, EI0, C0, k_rod).
 
     这是模型的**唯一**刚度来源 —— 弯曲与轴向同源, 改一处即同步。
@@ -219,9 +219,25 @@ def cell_stiffness(E=E_MAT_DEFAULT, A=A_STRUT_DEFAULT, N_circ=N_CIRC_DEFAULT,
     ei0 = k_unit * l_ax * sum_y2
     c0 = ei0 / L_strut
     k_rod = float(N_circ) * k_unit / float(N_long)
+    # ── 贴死判据 (2026-10-19) ────────────────────────────────────
+    # α 很小时菱形被压平, `l_ax = 2·L_strut·sinα` 会小于斜撑自身厚度 t_strut
+    # ⇒ 该方向已无行程, 载荷改走**斜撑轴向**(桁架式), 不再靠菱形转动:
+    #   · 转动式 ∝ sin³α, α→0 时荒谬地趋零 (α=5° 只有 6.1e-4 N·m²)
+    #   · 桁架式  = E·A·Σy², **与 α 无关** (弯曲时一侧受拉一侧受压)
+    # Σy² 取**几何值** N_circ·r²/2 (相对直径的二阶矩); 下面的 sum_y2 是它的
+    # 4 倍 (历史口径, 为与旧表逐位兼容而保留, 详见 docs/derivations/09)。
+    # t_strut=None ⇒ 不做判据 (旧配置逐位不变)。
+    locked = False
+    if t_strut is not None and l_ax <= float(t_strut):
+        locked = True
+        sum_y2_geo = 0.5 * float(N_circ) * float(r_i) ** 2
+        ei0 = float(E) * float(A) * sum_y2_geo
+        c0 = ei0 / L_strut
+        k_rod = float(N_circ) * float(E) * float(A)
     return dict(k_unit=k_unit, alpha=al, alpha_deg=np.degrees(al),
                 L_strut=L_strut, l_ax=l_ax, sum_y2=sum_y2, N_long=N_long,
                 EI0=ei0, C0=c0, k_rod=k_rod,
+                locked=locked, t_strut=t_strut,
                 eps_lock=(1.0 - s) / s if s > 1e-12 else np.inf)
 
 
@@ -1484,10 +1500,11 @@ class LatticeCell:
 
     def __init__(self, E=E_MAT_DEFAULT, A=A_STRUT_DEFAULT, N_circ=N_CIRC_DEFAULT,
                  r_i=R_DISK_DEFAULT, alpha_deg=ALPHA_CELL_DEG, N_long=None,
-                 L=None):
+                 L=None, t_strut=None):
         self.E = float(E); self.A = float(A)
         self.N_circ = int(N_circ); self.r_i = float(r_i)
         self.alpha_deg = alpha_deg
+        self.t_strut = None if t_strut is None else float(t_strut)
         self.L_arm = float(L_TOTAL if L is None else L)
         self._N_long_in = N_long
         self._recompute()
@@ -1495,13 +1512,15 @@ class LatticeCell:
     def _recompute(self):
         d = cell_stiffness(E=self.E, A=self.A, N_circ=self.N_circ,
                            N_long=self._N_long_in, r_i=self.r_i,
-                           L=self.L_arm, alpha_deg=self.alpha_deg)
+                           L=self.L_arm, alpha_deg=self.alpha_deg,
+                           t_strut=self.t_strut)
         self.k_unit = d["k_unit"]; self.alpha = d["alpha"]
         self.L_strut = d["L_strut"]; self.l_ax = d["l_ax"]
         self.sum_y2 = d["sum_y2"]; self.N_long = d["N_long"]
         self.EI0 = d["EI0"]; self.C0 = d["C0"]; self.k_rod = d["k_rod"]
         self.GJ = self.EI0
         self.eps_lock = d["eps_lock"]
+        self.locked = d["locked"]        # ★ 贴死: EI0/k_rod 已切桁架式
 
     # ── 派生关系 ──────────────────────────────────────────────
     @property
