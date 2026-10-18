@@ -170,6 +170,41 @@ nsub=2–8 时状态会撞 ±3 / ±80 钳位，钳位处导数不连续、且误
 5. **批量版**：现在的 `varjac.py` 是单样本；要接进 `shooting_batch` 需向量化
 6. 端到端收益要实测（预期 3–6× 于雅可比本身；不是与状态数无关的免费加速）
 
+## 8. 阶段 4：∂res/∂τ（位姿雅可比的解析来源）
+
+`res_jac_tau(x0, tau6, params) → (res, tip, Jtau)`，`Jtau = ∂res/∂τ` 形如 (ncol,6)。
+
+变分链与 ∂/∂x₀ 完全平行，只是初值不同：$\Psi(0)=0$、$\partial R/\partial	au(0)=0$。
+
+**τ 只以线性形式出现**，所以 ∂f/∂τ 也是闭式：
+
+$$
+\frac{\partial A_i}{\partial 	au_w}=-\frac{\hat p_b^{\,2}}{n^3},\qquad
+\frac{\partial B_i}{\partial	au_w}=\hat{	ilde r}_w\frac{\partial A_i}{\partial	au_w}
+$$
+
+$$
+\frac{\partial G}{\partial	au_w}=-\sum\frac{\partial A_i}{\partial	au_w}\hat{	ilde r}_w,\quad
+\frac{\partial H}{\partial	au_w}=-\sum\frac{\partial B_i}{\partial	au_w}\hat{	ilde r}_w,\quad
+\frac{\partial c}{\partial	au_w}=-\frac{\partial b}{\partial	au_w},\quad
+\frac{\partial d}{\partial	au_w}=-\frac{\partial a_i}{\partial	au_w}
+$$
+
+锚点 $F_s/L_s$ 对 τ 还有一项**直接**偏导（$\partial F_s/\partial	au_i=-p_{sp}/|p_{sp}|$），
+再加经 $R$、$(u,v)$ 的间接项。
+
+| 检查（`check_res_jac_tau.py`，nsub=30，3 组） | 结果 |
+| --- | --- |
+| ① 值路径与 `res_jac` 逐位一致 | **0.000e+00** |
+| ② ∂res/∂τ vs 中心差分 | **4.5e-9** |
+| ③ 计时：解析 741 ms / 差分 6815 ms | **9.19×** |
+
+### 8.1 值得记的对比
+
+同一份代码，`∂f/∂τ` 先写成**差分**时只有 **1.30×**；改成闭式后是 **9.19×**。
+⇒ 纯 Python 原型里"每子步多一次 stage 求值"就是硬成本，**"外层解析 + 内层差分"省不下钱**，
+必须一路解析到底。
+
 ## 6. 诚实备注
 
 解析雅可比**不能**因为"状态数少"就自动比差分快：$\partial f/\partial y$ 的传播需要

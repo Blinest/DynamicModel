@@ -255,3 +255,70 @@ def stage_f_jac(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs):
 def stage_f_jac3(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs):
     """返回 (f, df_dy, df_dfe)，供变分传播用（要 fe_b 那条链）。"""
     return _stage_core(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs)
+
+
+def stage_f_dtau_fd(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs, h=1e-6):
+    """∂f/∂τ_w 的**差分**版 (6, W)，只留作对拍参照。"""
+    tau_w = np.asarray(tau_w, float)
+    W = tau_w.size
+    out = np.zeros((6, W))
+    for w in range(W):
+        tp = tau_w.copy(); tm = tau_w.copy()
+        tp[w] += h; tm[w] -= h
+        fp = _stage_core(y, Kse, tp, ri_w, fe_b, lat, sEI, sGJ, sLs)[0]
+        fm = _stage_core(y, Kse, tm, ri_w, fe_b, lat, sEI, sGJ, sLs)[0]
+        out[:, w] = (fp - fm) / (2.0 * h)
+    return out
+
+
+def stage_f_dtau(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs):
+    """∂f/∂τ_w → (6, W)，**解析**。
+
+    τ 只以线性形式出现在单根丝的分母里：
+
+        coef = −τ_w / n³,   A_i = coef·p̂_b²
+        ⇒ ∂A_i/∂τ_w = −p̂_b²/n³        (2)
+        B_i = r̃̂_w A_i,  G = −ΣA_i r̃̂_w,  H = −ΣB_i r̃̂_w
+        a_i = A_i·(û p_b),  b = Σ r̃̂_w a_i
+        c 含 −b,  d 含 −a
+
+    其余（Kse/Kbt/fe_b/p_b/n）都与 τ 无关 ⇒ 只剩这一条链：
+        ∂f/∂τ_w = M⁻¹ ( ∂r/∂τ_w − (∂M/∂τ_w)·f )
+    """
+    y = np.asarray(y, float)
+    u = y[:3]; v = y[3:]
+    tau_w = np.asarray(tau_w, float)
+    W = tau_w.size
+    Kbt = kbt(u, lat, sEI, sGJ, sLs)
+    A, B, G, H, c, d = intermed(u, v, Kse, Kbt, tau_w, ri_w, fe_b)
+    M, r = _assemble(Kse, Kbt, A, B, G, H, c, d)
+    f = np.linalg.solve(M, r)
+
+    dA = np.zeros((3, 3, W)); dB = np.zeros((3, 3, W))
+    dG = np.zeros((3, 3, W)); dH = np.zeros((3, 3, W))
+    dc = np.zeros((3, W)); dd = np.zeros((3, W))
+    uh = hat(u)
+    for w in range(W):
+        ri = ri_w[w]; rih = hat(ri)
+        pb = uh @ ri + v
+        nrm = max(float(np.linalg.norm(pb)), 1e-12)
+        P2 = hat(pb) @ hat(pb)
+        dAi = -P2 / nrm ** 3
+        dBi = rih @ dAi
+        dA[:, :, w] = dAi; dB[:, :, w] = dBi
+        dG[:, :, w] = -(dAi @ rih)
+        dH[:, :, w] = -(dBi @ rih)
+        ai = dAi @ (uh @ pb)
+        bi = rih @ ai
+        dd[:, w] = -ai          # d 含 −a
+        dc[:, w] = -bi          # c 含 −b
+
+    dM = np.zeros((6, 6, W))
+    dM[:3, :3, :] = dA; dM[:3, 3:, :] = dG
+    dM[3:, :3, :] = dB; dM[3:, 3:, :] = dH
+    dr = np.zeros((6, W))
+    dr[:3, :] = dd; dr[3:, :] = dc
+    out = np.empty((6, W))
+    for w in range(W):
+        out[:, w] = np.linalg.solve(M, dr[:, w] - dM[:, :, w] @ f)
+    return out

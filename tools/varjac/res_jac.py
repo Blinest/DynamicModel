@@ -30,7 +30,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from varjac import kbt, kbt_jac, stage_f_jac3  # noqa: E402
+from varjac import kbt, kbt_jac, stage_f_jac3, stage_f_dtau  # noqa: E402
 
 _E3 = np.array([0.0, 0.0, 1.0])
 
@@ -282,3 +282,170 @@ def res_jac(x0, tau6, params, F_tip=None, trace=False):
 
 def res_only(x0, tau6, params, F_tip=None):
     return res_jac(x0, tau6, params, F_tip)[:2]
+
+
+# ══════════════════════════════════════════════════════════════════════
+# ∂res/∂τ —— 逆解里位姿雅可比 J=∂e/∂τ 的解析来源（现在还是差分算）
+# ══════════════════════════════════════════════════════════════════════
+def _anchor_direct_tau(u, v, R, anchor, ri_all):
+    """锚点对 τ 的**直接**偏导：(dF(3,6), dL(3,6))。
+
+    间接项（R、(u,v) 随 τ 变）由 dRt / Psi 那条链承担，这里只算
+    F = −Σ τ_i·psp/|psp| 里那个显式的 τ_i。
+    """
+    dF = np.zeros((3, 6))
+    dL = np.zeros((3, 6))
+    uh = hat(u)
+    for i in anchor:
+        ri = ri_all[i]
+        pb = uh @ ri + v
+        psp = R @ pb
+        nrm = max(float(np.linalg.norm(psp)), 1e-12)
+        dF[:, i] += -psp / nrm
+        dL[:, i] += -(hat(R @ ri) @ psp) / nrm
+    return dF, dL
+
+
+def res_jac_tau(x0, tau6, params, F_tip=None):
+    """返回 (res, tip, Jtau)，Jtau = ∂res/∂τ 形如 (ncol,6)。
+
+    变分链：Ψ = ∂[v;u]/∂τ (6,6)，dRt = ∂R/∂τ (3,3,6)，dLzt = ∂Lz/∂τ。
+    与 `res_jac`（对 x₀ 求导）结构完全平行，只是初值不同：Ψ(0)=0、dRt(0)=0。
+    同一套 ∂f/∂y，外加 τ 直接进 `intermed` 的那一项 ∂f/∂τ_w。
+    """
+    from tendon_coupling import L, L1, L2, SEG_A, SEG_B, _wire_r_vec
+    x0 = np.asarray(x0, float).reshape(6)
+    tau6 = np.asarray(tau6, float).reshape(6)
+    v = x0[:3].copy(); u = x0[3:].copy()
+    R = np.eye(3)
+    p = np.zeros(3)
+    Psi = np.zeros((6, 6))          # ∂[v;u]/∂τ
+    dRt = np.zeros((3, 3, 6))       # ∂R/∂τ
+    Lz = 0.0; dLzt = np.zeros(6)
+
+    ri_all = _wire_r_vec(params.r_disk)
+    rho_total = params.rhoA + params.disk_mass / L
+    fe_w = np.array([0.0, 0.0, -rho_total * 9.81])
+    rod_on = bool(getattr(params, "rod_constraint", False))
+    lat = bool(getattr(params, "lattice", False))
+    cells = getattr(params, "cells", None)
+
+    def _seg(cn):
+        c = (cells[0] if cn == 0 else cells[-1]) if cells else None
+        if c is not None:
+            return (c.EI0, c.C0, c.L_strut, c.GJ, c.k_rod, params.GA)
+        from tendon_coupling import C0_DEFAULT, L_STRUT_DEFAULT
+        m = 2.0 if cn == 0 else 1.0
+        return (m * params.EI, C0_DEFAULT, L_STRUT_DEFAULT, m * params.GJ,
+                m * params.k_rod, m * params.GA)
+
+    for k in (0, 1):
+        Lseg = L1 if k == 0 else L2
+        nsub = params.n_p if k == 0 else params.n_d
+        sEI, sC0, sLs, sGJ, sKR, sGA = _seg(k)
+        Kse = np.diag([sGA, sGA, sKR])
+        wires = list(range(6)) if k == 0 else list(SEG_B)
+        tau_w = tau6[list(wires)]
+        ri_w = ri_all[list(wires)]
+        S = np.zeros((len(wires), 6))
+        for i, w in enumerate(wires):
+            S[i, w] = 1.0
+        ds = Lseg / nsub
+
+        for _ in range(nsub):
+            fe_b = R.T @ fe_w
+            dfe_bt = np.einsum('jik,j->ik', dRt, fe_w)
+            y = np.concatenate([u, v])
+            f, df_dy, df_dfe = stage_f_jac3(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs)
+            df_dx = df_dy[:, [3, 4, 5, 0, 1, 2]]
+            df_dtau = stage_f_dtau(y, Kse, tau_w, ri_w, fe_b, lat, sEI, sGJ, sLs) @ S
+            k1 = f.copy()
+            dk1 = df_dx @ Psi + df_dfe @ dfe_bt + df_dtau
+            u_m = u + 0.5 * ds * k1[3:]
+            v_m = v + 0.5 * ds * k1[:3]
+            Psi_m = Psi + 0.5 * ds * dk1             # 行序 [v;u]
+            du_m = Psi_m[3:, :]
+            dv_m = Psi_m[:3, :]
+
+            ym = np.concatenate([u_m, v_m])
+            f2, df2_dy, df2_dfe = stage_f_jac3(ym, Kse, tau_w, ri_w, fe_b,
+                                               lat, sEI, sGJ, sLs)
+            df2_dtau = stage_f_dtau(ym, Kse, tau_w, ri_w, fe_b,
+                                    lat, sEI, sGJ, sLs) @ S
+            dym = np.vstack([du_m, dv_m])            # 行序 [u;v] 与 df2_dy 的列序一致
+            dk2 = df2_dy @ dym + df2_dfe @ dfe_bt + df2_dtau
+            k2 = f2.copy()
+
+            Lz += ds * v_m[2]
+            dLzt += ds * dv_m[2, :]
+            v_new = v + ds * k2[:3]
+            u_new = u + ds * k2[3:]
+            dPsi = np.vstack([Psi[:3, :] + ds * dk2[:3, :],
+                              Psi[3:, :] + ds * dk2[3:, :]])
+            mask = np.ones(6)
+            for a in range(3):
+                if v_new[a] > 3.0 or v_new[a] < -3.0:
+                    mask[a] = 0.0
+                if u_new[a] > 80.0 or u_new[a] < -80.0:
+                    mask[3 + a] = 0.0
+            v_new = np.clip(v_new, -3.0, 3.0)
+            u_new = np.clip(u_new, -80.0, 80.0)
+            Psi_new = mask[:, None] * dPsi
+
+            Tm = np.eye(3) + 0.5 * ds * hat(u_m)
+            Rmid = R @ Tm
+            p = p + ds * (Rmid @ v_m)
+            dpt = ds * (np.einsum('ijk,j->ik', dRt, (Tm @ v_m))
+                        + np.einsum('ij,jk->ik', Rmid, dv_m)
+                        + 0.5 * ds * np.einsum('ij,jk->ik', R,
+                                               np.einsum('ijk,j->ik',
+                                                         dhat_cols(du_m), v_m)))
+
+            T = np.eye(3) + ds * hat(u_new)
+            Rtmp = R @ T
+            dRtmp = np.einsum('ijk,jl->ilk', dRt, T) \
+                + ds * np.einsum('ij,jlk->ilk', R, dhat_cols(Psi_new[3:, :]))
+            R, dRt = ortho_jac(Rtmp, dRtmp)
+
+            v, u, Psi = v_new, u_new, Psi_new
+        if k == 0:
+            Fs, Ls, dFs, dLs = anchor_jac(u, v, R, dRt, Psi[3:, :], Psi[:3, :],
+                                          list(SEG_A), tau6, ri_all)
+            dFdir, dLdir = _anchor_direct_tau(u, v, R, list(SEG_A), ri_all)
+            dFs = dFs + dFdir; dLs = dLs + dLdir
+            dRFs = np.einsum('jik,j->ik', dRt, Fs) + R.T @ dFs
+            dRLs = np.einsum('jik,j->ik', dRt, Ls) + R.T @ dLs
+            dv_corr = np.linalg.solve(Kse, dRFs)
+            v = v - np.linalg.solve(Kse, R.T @ Fs)
+            Psi = Psi.copy()
+            Psi[:3, :] -= dv_corr
+            Kb = kbt(u, lat, sEI, sGJ, sLs)
+            dKb = kbt_jac(u, lat, sEI, sGJ, sLs)
+            dKb_dt = np.einsum('ijm,mk->ijk', dKb, Psi[3:, :])
+            w = np.linalg.solve(Kb, R.T @ Ls)
+            rhs = dRLs - np.einsum('ijk,j->ik', dKb_dt, w)
+            u = u - w
+            Psi[3:, :] -= np.linalg.solve(Kb, rhs)
+
+    sEI, sC0, sLs, sGJ, sKR, sGA = _seg(1)
+    Kse = np.diag([sGA, sGA, sKR])
+    Kb = kbt(u, lat, sEI, sGJ, sLs)
+    dKb = kbt_jac(u, lat, sEI, sGJ, sLs)
+    dKb_dt = np.einsum('ijm,mk->ijk', dKb, Psi[3:, :])
+    vv = v - _E3
+    n_e = R @ (Kse @ vv)
+    m_e = R @ (Kb @ u)
+    dn_e = np.einsum('ijk,j->ik', dRt, (Kse @ vv)) + R @ (Kse @ Psi[:3, :])
+    dm_e = np.einsum('ijk,j->ik', dRt, (Kb @ u)) \
+        + R @ (np.einsum('ijk,j->ik', dKb_dt, u) + Kb @ Psi[3:, :])
+    Fs, Ls, dFs, dLs = anchor_jac(u, v, R, dRt, Psi[3:, :], Psi[:3, :],
+                                  list(SEG_B), tau6, ri_all)
+    dFdir, dLdir = _anchor_direct_tau(u, v, R, list(SEG_B), ri_all)
+    dFs = dFs + dFdir; dLs = dLs + dLdir
+    ft = np.zeros(3) if F_tip is None else np.asarray(F_tip, float).reshape(3)
+    res = np.concatenate([n_e - Fs - ft, m_e - Ls])
+    Jtau = np.vstack([dn_e - dFs, dm_e - dLs])
+    if rod_on:
+        res = np.concatenate([res, [Lz / params.rod_free_len - 1.0]])
+        Jtau = np.vstack([Jtau, (dLzt / params.rod_free_len)[None, :]])
+    return res, p.copy(), Jtau
