@@ -488,29 +488,14 @@ def _fill_dL(records, params):
         r["dL_mm"] = dL[i]
 
 
-def _wire_geom_len_batch(Pc, Rc):
-    """批量算 6 丝空间路径长 (与 sdm_vc_disp.tendon_path_length 一致).
-
-    Pc (N, n+1, 3), Rc (N, n+1, 3, 3) → (N, 6)。
-    """
-    N, n1, _ = Pc.shape
-    nsub = n1 - 1
-    nA = int(round(L1 / (L / nsub)))
-    a = np.radians(ALPHA_DEG)
-    o = np.stack([0.030 * np.cos(a), 0.030 * np.sin(a), np.zeros(6)], axis=1)  # (6,3)
-    off = np.einsum('nsij,wj->nswi', Rc, o)        # (N, n+1, 6, 3) 截面偏移随姿态转
-    q = Pc[:, :, None, :] + off                    # (N, n+1, 6, 3) 丝节点空间位置
-    seg = np.linalg.norm(np.diff(q, axis=1), axis=3)   # (N, n, 6) 每小段长
-    out = np.zeros((N, 6))
-    for w in range(6):
-        end = nA if w in SEG_A else nsub
-        out[:, w] = seg[:, :end, w].sum(axis=1)
-    return out
+# 2026-10-18: 本文件原先**自带一份** `_wire_geom_len_batch` 副本，且把孔位半径
+# 写死成 0.030 m —— 与 `tendon_coupling` 的同名实现重复、与 `params.r_disk`
+# (默认 0.020) 口径不一致。副本已删除, 统一走上行 import 的版本。
 
 
-def _wire_geom_len(p_curve, R_curve):
+def _wire_geom_len(p_curve, R_curve, r_wire=None):
     """单条 (保留作参考/对拍用)."""
-    return _wire_geom_len_batch(p_curve[None], R_curve[None])[0]
+    return _wire_geom_len_batch(p_curve[None], R_curve[None], r_wire=r_wire)[0]
 
 
 # ==================== 6D 白化度量 (§10.5 要点2) ====================

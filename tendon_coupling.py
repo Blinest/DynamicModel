@@ -572,7 +572,7 @@ else:
             RuntimeWarning, stacklevel=2)
 
 
-def tendon_path_length(shape, w, mode="geodesic"):
+def tendon_path_length(shape, w, mode="geodesic", r_wire=None):
     """由 VC 解(骨架 p, R) 算丝 w 的空间路径长.
 
     mode="geodesic" (唯一实现): 沿孔位折线 q_j = p_j + R_j·o_w 逐段累加 —— 丝被
@@ -593,7 +593,8 @@ def tendon_path_length(shape, w, mode="geodesic"):
     n = len(p) - 1                 # 子段数
     nA = int(round(L1 / (L / n)))  # 段界所在节点
     end = nA if w in SEG_A else n
-    o = np.array([0.030 * np.cos(ALPHA[w]), 0.030 * np.sin(ALPHA[w]), 0.0])
+    r = R_DISK_DEFAULT if r_wire is None else float(r_wire)
+    o = np.array([r * np.cos(ALPHA[w]), r * np.sin(ALPHA[w]), 0.0])
     total = 0.0
     q_prev = p[0] + R[0] @ o
     for j in range(1, end + 1):
@@ -701,16 +702,22 @@ def _hat_b(V):
 def _L0_wire():
     return np.array([L1 if w in SEG_A else L for w in range(6)])
 
-def _wire_geom_len_batch(Pc, Rc):
+def _wire_geom_len_batch(Pc, Rc, r_wire=None):
     """批量算 6 丝空间路径长 (与 sdm_vc_disp.tendon_path_length 一致).
 
     Pc (N, n+1, 3), Rc (N, n+1, 3, 3) → (N, 6)。
+
+    r_wire : 丝孔位半径 [m]。None → `R_DISK_DEFAULT`(= `params.r_disk` 的默认值)。
+    ⚠ 2026-10-18 修正: 原实现把半径**写死成 0.030**, 而力学侧一律用 `params.r_disk`
+      (默认 0.020) ⇒ "表内 dL_mm 按 30mm 算、力学按 r_disk 算"的静默不一致。
+      **改后所有旧表的 dL_mm 需重建**（见 docs/derivations/08）。
     """
+    r = R_DISK_DEFAULT if r_wire is None else float(r_wire)
     N, n1, _ = Pc.shape
     nsub = n1 - 1
     nA = int(round(L1 / (L / nsub)))
     a = np.radians(ALPHA_DEG)
-    o = np.stack([0.030 * np.cos(a), 0.030 * np.sin(a), np.zeros(6)], axis=1)  # (6,3)
+    o = np.stack([r * np.cos(a), r * np.sin(a), np.zeros(6)], axis=1)  # (6,3)
     off = np.einsum('nsij,wj->nswi', Rc, o)        # (N, n+1, 6, 3) 截面偏移随姿态转
     q = Pc[:, :, None, :] + off                    # (N, n+1, 6, 3) 丝节点空间位置
     seg = np.linalg.norm(np.diff(q, axis=1), axis=3)   # (N, n, 6) 每小段长
@@ -721,9 +728,9 @@ def _wire_geom_len_batch(Pc, Rc):
     return out
 
 
-def _wire_geom_len(p_curve, R_curve):
+def _wire_geom_len(p_curve, R_curve, r_wire=None):
     """单条 (保留作参考/对拍用)."""
-    return _wire_geom_len_batch(p_curve[None], R_curve[None])[0]
+    return _wire_geom_len_batch(p_curve[None], R_curve[None], r_wire=r_wire)[0]
 
 
 # ==================== 6D 白化度量 (§10.5 要点2) ====================
@@ -1645,10 +1652,14 @@ class TendonCouplingModel:
         tau = np.asarray(tau, float).reshape(6)
         key = None
         if self.cache:
-            # ★ 缓存键必须含摩擦参数: 否则改 mu_friction 会命中无摩擦的旧解
+            # ★ 缓存键必须含**所有影响解的参数**: 否则改了参数仍会命中旧解。
+            #   mu_friction/friction_branch: 摩擦支不同 ⇒ 解不同;
+            #   r_disk: 孔位半径进 tendon_path_length / 锚点力臂 ⇒ 位形与 ΔL 都变
+            #   (2026-10-18 补: 原来漏了 r_disk, 改半径后静默返回旧解)。
             key = (tau.round(9).tobytes()
                    + np.array([self.params.mu_friction,
-                               self.params.friction_branch]).tobytes())
+                               self.params.friction_branch,
+                               self.params.r_disk]).tobytes())
             if key in self._c:
                 return self._c[key]
         sol = shooting(tau, self.params, F_tip=self.F_tip, g_world=self.g_world,
@@ -1681,10 +1692,15 @@ class TendonCouplingModel:
 
     # ───────────────────────────────── 肌腱几何部分
     def tendon_lengths(self, sol):
-        """由一次解算曲线得到 6 根丝的几何长度 L_w (m)."""
+        """由一次解算曲线得到 6 根丝的几何长度 L_w (m).
+
+        ⚠ 孔位半径必须取 `self.params.r_disk`：漏传会退回模块默认值,
+           与力学侧的 `params.r_disk` 脱钩（2026-10-18 修正的问题）。
+        """
         if not isinstance(sol, dict) or "p_curve" not in sol:
             sol = self.shape(sol)
-        return np.array([tendon_path_length(sol, w) for w in range(6)], float)
+        r = float(getattr(self.params, "r_disk", R_DISK_DEFAULT))
+        return np.array([tendon_path_length(sol, w, r_wire=r) for w in range(6)], float)
 
     def delta_L_mm(self, tau, x0=None, sol=None):
         """τ → ΔL (mm, 6 维).  ΔL_w = L_w(τ) − L0_w.
@@ -1792,10 +1808,10 @@ class TendonCouplingModel:
         if fine:
             if PS is None or RS is None:
                 PS, RS, _ = self.build_shapes_batch(taus, nsub=nsub, x=x, curve=curve)
-            return _wire_geom_len_batch(PS, RS)
+            return _wire_geom_len_batch(PS, RS, r_wire=self.params.r_disk)
         if curve is None:
             curve, _ = self.curve_batch(taus=taus, x=x)
-        return _wire_geom_len_batch(curve[0], curve[4])
+        return _wire_geom_len_batch(curve[0], curve[4], r_wire=self.params.r_disk)
 
     def delta_L_batch(self, taus=None, x=None, curve=None, nsub=600,
                       fine=False, PS=None, RS=None):
