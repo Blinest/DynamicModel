@@ -405,7 +405,8 @@ def pack_params(params):
     anchorB = np.asarray(list(SEG_B), dtype=np.int64)
     pr = dict(ri_all=ri_all, segA=segA, segB=segB,
               E3=np.asarray(_E3, float), few=few,
-              L1=float(L1), L2=float(L2),
+              L1=float(getattr(params, "L1", None) or L1),
+              L2=float(getattr(params, "L2", None) or L2),
               n_p=int(params.n_p), n_d=int(params.n_d),
               lat=bool(getattr(params, "lattice", False)),
               rod_on=bool(getattr(params, "rod_constraint", False)),

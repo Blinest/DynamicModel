@@ -275,7 +275,16 @@ class SDMParams:
                  rod_free_len=None, rod_constraint=False,
                  lattice=True, C0=C0_DEFAULT, L_strut=L_STRUT_DEFAULT,
                  EA=None, cells=None,
-                 mu_friction=0.0, friction_branch=1.0):
+                 mu_friction=0.0, friction_branch=1.0,
+                 L1=None, L2=None, alpha_deg=None, E=None, A=None, r_i=None,
+                 t_strut=None):
+        """⚠ 2026-10-18: 臂体几何/材料也进对象了 —— `L1/L2/alpha_deg/E/A/r_i/t_strut`。
+
+        这些字段为 None 时**回退模块常量**（`L1/L2`、`ALPHA_CELL_DEG`、
+        `E_MAT_DEFAULT`、`A_STRUT_DEFAULT`、`R_DISK_DEFAULT`），因此旧调用点逐位不变。
+        设了就以此为准（`pack_params` / `_L0_wire` / `_wire_geom_len_batch` 都读它），
+        不再需要 monkey-patch 模块常量。
+        """
         if EA is not None:                      # 旧调用点兼容: EA → k_rod
             k_rod = float(EA)
         if GJ is None:                          # 抗扭: 圆截面基准取与弯曲同值
@@ -296,6 +305,26 @@ class SDMParams:
         self.friction_branch = float(friction_branch)
         # 菱形晶胞非线性弯曲刚度: 开启后 EI 随曲率变化 (笔记原式, 无 seed/floor)
         self.lattice = lattice; self.C0 = C0; self.L_strut = L_strut
+        # ── 臂体几何/材料 (None → 回退模块常量; 设了以它为准) ──
+        self.L1 = None if L1 is None else float(L1)
+        self.L2 = None if L2 is None else float(L2)
+        self.L_total = (None if (self.L1 is None or self.L2 is None)
+                        else self.L1 + self.L2)
+        self.alpha_deg = None if alpha_deg is None else float(alpha_deg)
+        self.E = None if E is None else float(E)
+        self.A = None if A is None else float(A)
+        self.r_i = None if r_i is None else float(r_i)
+        self.t_strut = None if t_strut is None else float(t_strut)
+
+    # ── 有效几何 (None → 模块常量) ──────────────────────────────
+    def geo_L1(self):
+        return float(L1 if self.L1 is None else self.L1)
+
+    def geo_L2(self):
+        return float(L2 if self.L2 is None else self.L2)
+
+    def geo_L(self):
+        return float(L if self.L_total is None else self.L_total)
         # ── 分段晶胞: 段A / 段B 各一种菱形胞(只差周向胞数) ──
         # 给了 cells 就用它决定各段 Kbt/Kse (取代旧的"段A 双管 ×2"近似)
         self.cells = tuple(cells) if cells is not None else None
@@ -413,7 +442,7 @@ def forward(x, tau, F_tip, g_world, R_mount, params, want_curve=False):
 
     for k in (0, 1):
         Kse = params.Kse(k)
-        Lseg = L1 if k == 0 else L2
+        Lseg = params.geo_L1() if k == 0 else params.geo_L2()
         nsub = params.n_p if k == 0 else params.n_d
         ds = Lseg / nsub
         wires = params.active_wires(k)
@@ -572,7 +601,8 @@ else:
             RuntimeWarning, stacklevel=2)
 
 
-def tendon_path_length(shape, w, mode="geodesic", r_wire=None):
+def tendon_path_length(shape, w, mode="geodesic", r_wire=None,
+                       L1_geo=None, L_total=None):
     """由 VC 解(骨架 p, R) 算丝 w 的空间路径长.
 
     mode="geodesic" (唯一实现): 沿孔位折线 q_j = p_j + R_j·o_w 逐段累加 —— 丝被
@@ -591,7 +621,9 @@ def tendon_path_length(shape, w, mode="geodesic", r_wire=None):
                          "(只保留 geodesic; 见上方说明)")
     p = shape["p_curve"]; R = shape["R_curve"]
     n = len(p) - 1                 # 子段数
-    nA = int(round(L1 / (L / n)))  # 段界所在节点
+    l1 = L1 if L1_geo is None else float(L1_geo)
+    lt = L if L_total is None else float(L_total)
+    nA = int(round(l1 / (lt / n)))  # 段界所在节点
     end = nA if w in SEG_A else n
     r = R_DISK_DEFAULT if r_wire is None else float(r_wire)
     o = np.array([r * np.cos(ALPHA[w]), r * np.sin(ALPHA[w]), 0.0])
@@ -699,10 +731,13 @@ def _hat_b(V):
 
 
 # ── 几何辅助 (原 ik_table, 纯几何故下沉; 解 tendon_coupling→ik_table 的环) ──
-def _L0_wire():
-    return np.array([L1 if w in SEG_A else L for w in range(6)])
+def _L0_wire(params=None):
+    if params is None:
+        return np.array([L1 if w in SEG_A else L for w in range(6)])
+    l1, lt = params.geo_L1(), params.geo_L()
+    return np.array([l1 if w in SEG_A else lt for w in range(6)])
 
-def _wire_geom_len_batch(Pc, Rc, r_wire=None):
+def _wire_geom_len_batch(Pc, Rc, r_wire=None, L1_geo=None, L_total=None):
     """批量算 6 丝空间路径长 (与 sdm_vc_disp.tendon_path_length 一致).
 
     Pc (N, n+1, 3), Rc (N, n+1, 3, 3) → (N, 6)。
@@ -713,9 +748,11 @@ def _wire_geom_len_batch(Pc, Rc, r_wire=None):
       **改后所有旧表的 dL_mm 需重建**（见 docs/derivations/08）。
     """
     r = R_DISK_DEFAULT if r_wire is None else float(r_wire)
+    l1 = L1 if L1_geo is None else float(L1_geo)
+    lt = L if L_total is None else float(L_total)
     N, n1, _ = Pc.shape
     nsub = n1 - 1
-    nA = int(round(L1 / (L / nsub)))
+    nA = int(round(l1 / (lt / nsub)))
     a = np.radians(ALPHA_DEG)
     o = np.stack([r * np.cos(a), r * np.sin(a), np.zeros(6)], axis=1)  # (6,3)
     off = np.einsum('nsij,wj->nswi', Rc, o)        # (N, n+1, 6, 3) 截面偏移随姿态转
@@ -950,7 +987,7 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
     R = np.tile(np.eye(3), (N, 1, 1))
     p = np.zeros((N, 3))
     ri_all = _wire_r_vec(params.r_disk)
-    rho_total = params.rhoA + params.disk_mass / L
+    rho_total = params.rhoA + params.disk_mass / params.geo_L()
     fe_w = np.zeros((N, 3)); fe_w[:, 2] = -rho_total * 9.81
     rod_on = bool(getattr(params, "rod_constraint", False))
     Lz = np.zeros(N)                                  # 中心杆累计弧长 ∫v_z ds
@@ -1636,12 +1673,17 @@ class TendonCouplingModel:
         self.h_tau = float(h_tau)
         self.tol = float(tol)
         self.max_iter = int(max_iter)
-        self.L0 = np.asarray(_L0_wire(), float)      # (6,) 未变形丝长
         self.cache = bool(cache)
         self.tau_max = 60.0
         self._c = {}
 
     # ───────────────────────────────── 全阶 Cosserat 部分
+    @property
+    def L0(self):
+        """(6,) 未变形丝长 [m]。随 `params.L1/L2` **实时**变化 —— 不要缓存,
+        否则构造后再改臂长会拿到旧值（与缓存键漏 r_disk 同一类坑）。"""
+        return np.asarray(_L0_wire(self.params), float)
+
     def shape(self, tau, x0=None):
         """τ(6) → 全阶 Cosserat 静力平衡解.
 
@@ -1700,7 +1742,10 @@ class TendonCouplingModel:
         if not isinstance(sol, dict) or "p_curve" not in sol:
             sol = self.shape(sol)
         r = float(getattr(self.params, "r_disk", R_DISK_DEFAULT))
-        return np.array([tendon_path_length(sol, w, r_wire=r) for w in range(6)], float)
+        l1 = self.params.geo_L1(); lt = self.params.geo_L()
+        return np.array([tendon_path_length(sol, w, r_wire=r,
+                                            L1_geo=l1, L_total=lt)
+                         for w in range(6)], float)
 
     def delta_L_mm(self, tau, x0=None, sol=None):
         """τ → ΔL (mm, 6 维).  ΔL_w = L_w(τ) − L0_w.
@@ -1805,13 +1850,16 @@ class TendonCouplingModel:
         fine=True: 用 nsub 细网格重建 —— 折线更逼近真实弧长, 会比表内 dL
             长 0.05~0.1mm (450mm 上约 2e-4 相对量), 属**网格差异不是模型差异**。
         """
+        l1 = self.params.geo_L1(); lt = self.params.geo_L()
         if fine:
             if PS is None or RS is None:
                 PS, RS, _ = self.build_shapes_batch(taus, nsub=nsub, x=x, curve=curve)
-            return _wire_geom_len_batch(PS, RS, r_wire=self.params.r_disk)
+            return _wire_geom_len_batch(PS, RS, r_wire=self.params.r_disk,
+                                        L1_geo=l1, L_total=lt)
         if curve is None:
             curve, _ = self.curve_batch(taus=taus, x=x)
-        return _wire_geom_len_batch(curve[0], curve[4], r_wire=self.params.r_disk)
+        return _wire_geom_len_batch(curve[0], curve[4], r_wire=self.params.r_disk,
+                                    L1_geo=l1, L_total=lt)
 
     def delta_L_batch(self, taus=None, x=None, curve=None, nsub=600,
                       fine=False, PS=None, RS=None):
