@@ -785,9 +785,9 @@ def _wire_stiff_add(params):
     return n * EA_w * r * r, n * EA_w
 
 
-def build_arm(L1=0.200, L2=0.200, r_i=0.008, r_disk=0.005, alpha_deg=5.0,
+def build_arm(L1=0.200, L2=0.200, r_i=0.008, r_disk=0.005, alpha_deg=None,
               E=2e8, A=1.5e-6, t_strut=1.5e-3,
-              n_circ_a=3, n_circ_b=3, n_long=None, rhoA=0.0, disk_mass=0.0,
+              n_circ_a=3, n_circ_b=3, n_long=136, rhoA=0.0, disk_mass=0.0,
               n_p=30, n_d=30, lattice=False, **kw):
     """按**实机**建臂: PEBA 菱形晶胞 (Φ16) + NiTi 丝 (分布 Φ10)。
 
