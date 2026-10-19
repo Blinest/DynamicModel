@@ -788,7 +788,7 @@ def _wire_stiff_add(params):
 def build_arm(L1=0.200, L2=0.200, r_i=0.008, r_disk=0.005, alpha_deg=None,
               E=2e8, A=1.5e-6, t_strut=1.5e-3,
               n_circ_a=3, n_circ_b=3, n_long=136, rhoA=0.0, disk_mass=0.0,
-              n_p=30, n_d=30, lattice=False, **kw):
+              n_p=30, n_d=30, lattice=False, EI=None, EA=None, **kw):
     """按**实机**建臂: PEBA 菱形晶胞 (Φ16) + NiTi 丝 (分布 Φ10)。
 
     实机参数（用户实测）: 臂长 400 mm 分两段、周向 3 个菱形、斜撑角 5°、
@@ -822,6 +822,18 @@ def build_arm(L1=0.200, L2=0.200, r_i=0.008, r_disk=0.005, alpha_deg=None,
                      alpha_deg=a_a, L=L1, t_strut=t_strut)
     cb = LatticeCell(E=E, A=A, N_circ=n_circ_b, r_i=r_i,
                      alpha_deg=a_b, L=L2, t_strut=t_strut)
+    # ── 反向标定: 直接用测得的截面刚度覆盖晶胞推导值 ──────────────
+    # 这是**推荐路径**: EI/EA 是截面属性, 台架一测就有, 不需要 E/α/N 的推导。
+    # 给 None 则保留晶胞式的值（正向设计路径）。
+    if EI is not None:
+        _ei = float(EI)
+        for _c in (ca, cb):
+            _c.EI0 = _ei
+            _c.C0 = _ei / _c.L_strut
+            _c.GJ = _ei
+    if EA is not None:
+        for _c in (ca, cb):
+            _c.k_rod = float(EA)
     p = ca.sd_params(n_p=n_p, n_d=n_d, rhoA=rhoA, disk_mass=disk_mass,
                      lattice=lattice)
     p.cells = (ca, cb)
