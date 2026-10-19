@@ -787,7 +787,7 @@ def _wire_stiff_add(params):
 
 def build_arm(L1=0.200, L2=0.200, r_i=0.008, r_disk=0.005, alpha_deg=5.0,
               E=2e8, A=1.5e-6, t_strut=1.5e-3,
-              n_circ_a=3, n_circ_b=3, rhoA=0.0, disk_mass=0.0,
+              n_circ_a=3, n_circ_b=3, n_long=None, rhoA=0.0, disk_mass=0.0,
               n_p=30, n_d=30, lattice=False, **kw):
     """按**实机**建臂: PEBA 菱形晶胞 (Φ16) + NiTi 丝 (分布 Φ10)。
 
@@ -802,11 +802,26 @@ def build_arm(L1=0.200, L2=0.200, r_i=0.008, r_disk=0.005, alpha_deg=5.0,
 
     返回 (ca, cb, params)：两段 LatticeCell 与已配置好的 SDMParams。
     ⚠ 臂长写进 `params.L1/L2/L_total`，不再 monkey-patch 模块常量。
+
+    **α 由几何闭合反解**（`alpha_deg=None` 且给 `n_long` 时）：
+        周向: 2·L_strut·cosα = 2π·r/N_circ  ⇒ L_strut = πr/(N_circ·cosα)
+        轴向: h = 2·L_strut·sinα = 2πr·tanα/N_circ,  且 N_long·h = L_seg
+        ⇒ **tanα = L_seg·N_circ / (2π·r·N_long)**
+    所以 α 不是自由参数：`N_circ`、`N_long`、`r`、`L` 定三个，α 就定了。
+    例: L=0.2, N_circ=3, r=8mm, N_long=136 ⇒ α=5.016°。
     """
+    if alpha_deg is None:
+        if n_long is None:
+            raise ValueError("alpha_deg=None 时必须给 n_long（轴向胞数/段）")
+        _nl = float(n_long)
+        a_a = float(np.degrees(np.arctan(L1 * n_circ_a / (2.0 * np.pi * r_i * _nl))))
+        a_b = float(np.degrees(np.arctan(L2 * n_circ_b / (2.0 * np.pi * r_i * _nl))))
+    else:
+        a_a = a_b = float(alpha_deg)
     ca = LatticeCell(E=E, A=A, N_circ=n_circ_a, r_i=r_i,
-                     alpha_deg=alpha_deg, L=L1, t_strut=t_strut)
+                     alpha_deg=a_a, L=L1, t_strut=t_strut)
     cb = LatticeCell(E=E, A=A, N_circ=n_circ_b, r_i=r_i,
-                     alpha_deg=alpha_deg, L=L2, t_strut=t_strut)
+                     alpha_deg=a_b, L=L2, t_strut=t_strut)
     p = ca.sd_params(n_p=n_p, n_d=n_d, rhoA=rhoA, disk_mass=disk_mass,
                      lattice=lattice)
     p.cells = (ca, cb)
