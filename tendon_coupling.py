@@ -762,6 +762,61 @@ def _L0_wire(params=None):
     l1, lt = params.geo_L1(), params.geo_L()
     return np.array([l1 if w in SEG_A else lt for w in range(6)])
 
+def _wire_stiff_add(params):
+    """丝作为**轴向结构件**的附加刚度 (2026-10-19)。
+
+    背景: 实机只有 PEBA 菱形晶胞 + NiTi 丝。PEBA 200 MPa 下晶胞的抗弯上限
+    (`E·A·Σy²` 全贴死) 只有 0.0288 N·m², 而实测 20° 下垂需要 ~0.060
+    ⇒ **晶胞无论怎么贴死都不够**, 缺的就是"绷紧的丝参与抗弯/抗压"这一项。
+
+    模型: 6 根丝 = 单向轴向构件 (只拉不压)。有预紧时全部绷紧 ⇒
+        EI += n·EA_w·r_disk²,   EA += n·EA_w
+    ⚠ v1 只做"有预紧即全部绷紧"的静态近似; 按局部应变判定单根绷/松是下一步。
+
+    返回 (dEI [N·m²], dEA [N])；`EA_w<=0` 或 `pre_tension<=0` 时返回 (0,0)
+    ⇒ 旧配置逐位不变。
+    """
+    EA_w = float(getattr(params, "EA_w", 0.0) or 0.0)
+    T0 = float(getattr(params, "pre_tension", 0.0) or 0.0)
+    if EA_w <= 0.0 or T0 <= 0.0:
+        return 0.0, 0.0
+    r = float(getattr(params, "r_disk", R_DISK_DEFAULT))
+    n = 6
+    return n * EA_w * r * r, n * EA_w
+
+
+def build_arm(L1=0.200, L2=0.200, r_i=0.008, r_disk=0.005, alpha_deg=5.0,
+              E=2e8, A=1.5e-6, t_strut=1.5e-3,
+              n_circ_a=3, n_circ_b=3, rhoA=0.0, disk_mass=0.0,
+              n_p=30, n_d=30, lattice=False, **kw):
+    """按**实机**建臂: PEBA 菱形晶胞 (Φ16) + NiTi 丝 (分布 Φ10)。
+
+    实机参数（用户实测）: 臂长 400 mm 分两段、周向 3 个菱形、斜撑角 5°、
+    PEBA E≈200 MPa、斜撑截面 1.5 mm²、斜撑厚 1.5 mm、丝分布半径 5 mm。
+    该几何下 `l_ax = 1.47 mm ≤ t_strut = 1.5 mm` ⇒ **自动判贴死**（`locked=True`），
+    刚度按桁架式取，线性 `∝sin³α` 那套在 α=5° 时物理失效。
+
+    锚点（用于校核）:
+      · 水平装、自重 20 g + 端载 20 g ⇒ 下垂 ~30.7°（实测约 20°，同量级）
+      · 竖直装、单侧拉丝 10–11 mm ⇒ 弯 90°（需再标 `EA_w`/预紧，见 §9 文档）
+
+    返回 (ca, cb, params)：两段 LatticeCell 与已配置好的 SDMParams。
+    ⚠ 臂长写进 `params.L1/L2/L_total`，不再 monkey-patch 模块常量。
+    """
+    ca = LatticeCell(E=E, A=A, N_circ=n_circ_a, r_i=r_i,
+                     alpha_deg=alpha_deg, L=L1, t_strut=t_strut)
+    cb = LatticeCell(E=E, A=A, N_circ=n_circ_b, r_i=r_i,
+                     alpha_deg=alpha_deg, L=L2, t_strut=t_strut)
+    p = ca.sd_params(n_p=n_p, n_d=n_d, rhoA=rhoA, disk_mass=disk_mass,
+                     lattice=lattice)
+    p.cells = (ca, cb)
+    p.r_disk = float(r_disk)          # sd_params 把 r_disk 写死成 r_i, 此处覆盖
+    p.L1 = float(L1); p.L2 = float(L2); p.L_total = float(L1 + L2)
+    for k, v in kw.items():
+        setattr(p, k, v)
+    return ca, cb, p
+
+
 def _wire_geom_len_batch(Pc, Rc, r_wire=None, L1_geo=None, L_total=None):
     """批量算 6 丝空间路径长 (与 sdm_vc_disp.tendon_path_length 一致).
 
@@ -1038,11 +1093,14 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
         """第 cn 段 (k=0 → 段A) 的刚度来源: (EI0, C0, L_strut, GJ, k_rod, GA)."""
         c = (_cells[0] if cn == 0 else _cells[-1]) if _cells else None
         if c is not None:
-            return (c.EI0, c.C0, c.L_strut, c.GJ,
-                    c.k_rod + float(getattr(params, "k_rod_ext", 0.0) or 0.0), params.GA)
+            _dEI, _dEA = _wire_stiff_add(params)
+            return (c.EI0 + _dEI, c.C0, c.L_strut, c.GJ,
+                    c.k_rod + float(getattr(params, "k_rod_ext", 0.0) or 0.0) + _dEA,
+                    params.GA)
         m = 2.0 if cn == 0 else 1.0
-        return (m * params.EI, C0, L_strut, m * params.GJ,
-                m * params.k_rod, m * params.GA)
+        _dEI, _dEA = _wire_stiff_add(params)
+        return (m * params.EI + _dEI, C0, L_strut, m * params.GJ,
+                m * params.k_rod + _dEA, m * params.GA)
 
     def _ei_of(uu):
         """菱形晶胞割线刚度 (N,) —— EI_eq=EI0·sinc(|κ|·L_strut), κ→0 时 → EI0."""
