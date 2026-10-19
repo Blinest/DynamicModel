@@ -1140,12 +1140,29 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
         wires = list(range(6)) if k == 0 else list(SEG_B)
         ds = Lseg / nsub
 
+        # ── 菱形硬化律开关 (2026-10-19) ─────────────────────────────
+        # lattice_mode="sin"  : M = C0·sin(θ)          —— 旧律, θ→π/2 饱和**变软**
+        # lattice_mode="lock" : M ∝ tan(θ)/tan(θ_lock) —— θ→θ_lock 发散(贴死)
+        #   θ=|κ|·L_strut; θ_lock = L_strut/r (由 Δα=α 的几何给:
+        #   κ_lock = α/(r·tanα) ≈ 1/r, 故 θ_lock ≈ L_strut/r)
+        #   小 θ 归一化到 EI_eq=sEI ⇒ 线性段与旧律一致, 只改大变形形状。
+        _mode = str(getattr(params, "lattice_mode", "sin"))
+        _th_lock = None
+        if lat and _mode == "lock":
+            _rr = float(getattr(params, "r_disk", R_DISK_DEFAULT))
+            _th_lock = (float(sLs) / _rr) if _rr > 0 else None
+
         def _kbt(uu):
             """按当前曲率算弯曲刚度矩阵 (N,3,3). lattice=False 时退化为常量。"""
             if lat:
                 th = np.linalg.norm(uu[:, :2], axis=1) * sLs
-                e = np.where(th < 1e-9, sEI,
-                             sEI * np.sin(th) / np.where(th < 1e-9, 1.0, th))
+                safe = np.where(th < 1e-9, 1.0, th)
+                e = np.where(th < 1e-9, sEI, sEI * np.sin(safe) / safe)
+                if _th_lock is not None and _th_lock > 1e-6:
+                    _c = np.tan(_th_lock) / _th_lock
+                    _t = np.clip(safe, 0.0, _th_lock * (1.0 - 1e-6))
+                    e_h = sEI * (np.tan(_t) / np.maximum(_t, 1e-12)) / _c
+                    e = np.where(th < 1e-9, sEI, e_h)
             else:
                 e = np.full(N, sEI)
             M = np.zeros((N, 3, 3))
