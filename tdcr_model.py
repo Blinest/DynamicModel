@@ -89,8 +89,12 @@ class TdcrModel:
 
     @property
     def kappa_lock(self):
-        """贴死阈值 κ [1/m]：Δα = α 时 ⇒ κ ≈ 1/r。"""
-        return 1.0 / CALIB["r_disk"] * (CALIB["r_o"] / CALIB["r_o"])
+        """贴死阈值 κ [1/m]。
+
+        由 `Δα = α` 的几何给出: 单胞角变化 Δα = κ·r·tanα，令 Δα=α
+        ⇒ `κ_lock = α/(r·tanα) ≈ 1/r`（α 小）。**用晶胞半径 r_o，不是丝分布半径 r_disk。**
+        """
+        return 1.0 / CALIB["r_o"]
 
     # ── 正解 ────────────────────────────────────────────────────
     def solve(self, tau, g_world=(0.0, 0.0, -9.81), F_tip=None, x0=None):

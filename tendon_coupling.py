@@ -552,10 +552,13 @@ def shooting(tau, params, F_tip=(0, 0, 0), g_world=(0, 0, -9.81),
     tau = np.array(tau, float); F_tip = np.array(F_tip, float)
     g_world = np.array(g_world, float)
     lsq = bool(getattr(params, "rod_constraint", False))
-    nx = 7 if lsq else 6
     # 各残差分量的量级: 力~N, 矩~N·m, 杆弧长残差~N·m (k_rod·δ) — 同量级, 不额外白化
     converged = False
     res, _ = forward(x, tau, F_tip, g_world, R_mount, params)
+    # ⚠ 2026-10-19: nx 必须**从实际残差长度取**, 不能按 rod_constraint 猜。
+    #   曾出现 forward 返回 7 维(杆弧长项) 而 flag 为 False ⇒ J 建成 6×6,
+    #   赋值时报 `could not broadcast (7,) into (6,)`。
+    nx = int(np.size(res))
     for it in range(max_iter):
         # 数值雅可比 nx×6
         J = np.zeros((nx, 6)); h = 1e-6
