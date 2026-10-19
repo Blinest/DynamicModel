@@ -367,6 +367,7 @@ def _pack_signature(params):
         float(getattr(params, "C0", 0.0)), float(getattr(params, "L_strut", 0.0)),
         float(getattr(params, "mu_friction", 0.0)),
         float(getattr(params, "friction_branch", 1.0)),
+        float(getattr(params, "k_rod_ext", 0.0) or 0.0),
         len(cells), *[float(v) if v is not None else -1.0 for v in c],
     )
 
@@ -391,11 +392,12 @@ def pack_params(params):
 
     def _seg(cn):
         c = (cells[0] if cn == 0 else cells[-1]) if cells else None
+        ext = float(getattr(params, "k_rod_ext", 0.0) or 0.0)
         if c is not None:
-            return (c.EI0, c.C0, c.L_strut, c.GJ, c.k_rod, params.GA)
+            return (c.EI0, c.C0, c.L_strut, c.GJ, c.k_rod + ext, params.GA)
         m = 2.0 if cn == 0 else 1.0
         return (m * params.EI, C0_DEFAULT, L_STRUT_DEFAULT, m * params.GJ,
-                m * params.k_rod, m * params.GA)
+                m * params.k_rod + ext, m * params.GA)
 
     segA = np.array(_seg(0), float)
     segB = np.array(_seg(1), float)

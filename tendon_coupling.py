@@ -215,7 +215,11 @@ def cell_stiffness(E=E_MAT_DEFAULT, A=A_STRUT_DEFAULT, N_circ=N_CIRC_DEFAULT,
     L_strut = np.pi * float(r_i) / (float(N_circ) * c) if c > 1e-12 else float(Ltot)
     k_unit = 2.0 * float(E) * float(A) * s ** 2 / L_strut
     l_ax = 2.0 * L_strut * s
-    sum_y2 = 2.0 * float(N_circ) * float(r_i) ** 2
+    # ── Σy² = 薄环二阶矩 = N_circ·r²/2 (2026-10-19 定口径) ──────────
+    # 薄圆环: I = A·r²/2 (整圈 ⟨y²⟩=r²/2), 离散 N 个点均布时 Σy²=N·r²/2, 两者**等价**。
+    # 斜撑自身厚度的修正 A·t²/12 只占 0.6% (t=1.5mm, r=8mm), 忽略。
+    # ⚠ 旧值 `2·N_circ·r²` 是它的 **4 倍** (=把力臂当成了直径 2r) ⇒ EI0 偏大 4 倍。
+    sum_y2 = 0.5 * float(N_circ) * float(r_i) ** 2
     ei0 = k_unit * l_ax * sum_y2
     c0 = ei0 / L_strut
     k_rod = float(N_circ) * k_unit / float(N_long)
@@ -293,7 +297,7 @@ class SDMParams:
                  EA=None, cells=None,
                  mu_friction=0.0, friction_branch=1.0,
                  L1=None, L2=None, alpha_deg=None, E=None, A=None, r_i=None,
-                 t_strut=None):
+                 t_strut=None, k_rod_ext=0.0):
         """⚠ 2026-10-18: 臂体几何/材料也进对象了 —— `L1/L2/alpha_deg/E/A/r_i/t_strut`。
 
         这些字段为 None 时**回退模块常量**（`L1/L2`、`ALPHA_CELL_DEG`、
@@ -307,6 +311,11 @@ class SDMParams:
             GJ = EI0_DEFAULT
         self.EI = EI; self.GA = GA; self.GJ = GJ
         self.k_rod = float(k_rod)
+        # ★ 附加轴向刚度 [N]：菱形晶胞之外的承载路径（内衬管/外皮/胶层/中心杆）。
+        #   实测证据：同源关系 EI0/k_rod = 2r²L 会强制"弯曲软则轴向也软"，
+        #   而实机是"轴向走斜撑直压（硬）+ 弯曲走菱形剪切（软）" ⇒ 必须解耦。
+        #   2026-10-19: 实测 (20° 自重下垂, 10mm→90°) 反推 EI0=0.0791、k_rod≈1.7e4。
+        self.k_rod_ext = float(k_rod_ext)
         # 无应力杆长 (直臂): 驱动丝给 ΔL<0 时杆被压短。默认 L (直臂几何长)。
         self.rod_free_len = float(L if rod_free_len is None else rod_free_len)
         # rod_constraint: 预留开关 (当前恒 6 残差; 杆约束已由本构隐式满足)。
@@ -1029,7 +1038,8 @@ def forward_batch_ref(x, tau, params, F_tip=None, want_curve=False):
         """第 cn 段 (k=0 → 段A) 的刚度来源: (EI0, C0, L_strut, GJ, k_rod, GA)."""
         c = (_cells[0] if cn == 0 else _cells[-1]) if _cells else None
         if c is not None:
-            return (c.EI0, c.C0, c.L_strut, c.GJ, c.k_rod, params.GA)
+            return (c.EI0, c.C0, c.L_strut, c.GJ,
+                    c.k_rod + float(getattr(params, "k_rod_ext", 0.0) or 0.0), params.GA)
         m = 2.0 if cn == 0 else 1.0
         return (m * params.EI, C0, L_strut, m * params.GJ,
                 m * params.k_rod, m * params.GA)
