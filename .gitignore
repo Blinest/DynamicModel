@@ -6,3 +6,6 @@ __pycache__/
 -e 
 # 打包产物（38MB 级，不入库）
 *.tdcrmodel
+
+# 完整表体积大(38MB), 不入库; 61节点精简版在 model/
+vc_table_*.npz
