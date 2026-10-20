@@ -3,3 +3,6 @@ __pycache__/
 *.pyo
 *.nbc
 *.nbi
+-e 
+# 打包产物（38MB 级，不入库）
+*.tdcrmodel
