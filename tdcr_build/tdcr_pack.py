@@ -89,6 +89,12 @@ def _table_stats(path):
         out["bend_min_deg"] = round(float(ang.min()), 2)
         out["bend_max_deg"] = round(float(ang.max()), 2)
     out["tau_comp_max"] = round(float(tau.max()), 2)
+    # ★ 表内版本键（EI / C0 / k_rod / r_disk ...）：用于校验"标定 vs 表"是否同一根臂
+    if "ver" in z.files:
+        try:
+            out["ver"] = json.loads(str(z["ver"]))
+        except Exception:
+            pass
     return out
 
 
@@ -157,8 +163,10 @@ def cmd_info(a):
         print(f"格式 : {m['format']}   创建: {m['created']}   git: {m['git_head']}")
         c = m.get("calib") or {}
         if c:
-            print(f"标定 : EI={c.get('EI')} N·m²  EA={c.get('EA')} N  "
+            print(f"代码标定(CALIB): EI={c.get('EI')} N·m²  EA={c.get('EA')} N  "
                   f"r_disk={c.get('r_disk')} m  n_circ={c.get('n_circ')}")
+            print("         ↑ 来自 tdcr_model.py，描述**实机臂**；"
+                  "表的力学以各表 `ver` 为准")
         print("表   :")
         ok = True
         for t in m["tables"]:
@@ -172,8 +180,26 @@ def cmd_info(a):
                 flag = "✗ 缺文件"; ok = False
             print(f"   τmax={t['tau_max']:.0f}N  {t['n']:4d} 点  "
                   f"弯角 {t.get('bend_min_deg','?')}-{t.get('bend_max_deg','?')}°  {flag}")
-        print("校验 :", "全部通过" if ok else "有问题")
-    return 0 if ok else 1
+        # ── 标定 vs 表内版本键：必须是同一根臂 ───────────────────────
+        warn = False
+        for t in m["tables"]:
+            v = t.get("ver") or {}
+            ei_t = v.get("EI")
+            kr_t = ((v.get("seg") or [[None] * 5])[0] or [None] * 5)[4]
+            if ei_t is None or not c:
+                continue
+            ei_c = c.get("EI")
+            if ei_c:
+                rel = abs(ei_t - ei_c) / max(abs(ei_c), 1e-30)
+                if rel > 0.01:
+                    warn = True
+                    print(f"   ⚠ τmax={t['tau_max']:.0f}N 表内 EI={ei_t:.4g} N·m²，"
+                          f"标定 EI={ei_c:.4g} —— 差 {rel*100:.0f}%，**该表不是按这套标定建的**")
+            print(f"     表内: EI={ei_t:.4g}  C0={v.get('C0', float('nan')):.4g}  "
+                  f"k_rod={kr_t}  r_disk={v.get('r_disk')}")
+        print("校验 :", "全部通过" if (ok and not warn) else
+              ("sha256 通过，但**标定与表不一致**" if ok else "有问题"))
+    return 0 if (ok and not warn) else 1
 
 
 def cmd_unpack(a):
