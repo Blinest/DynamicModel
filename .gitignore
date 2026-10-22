@@ -9,3 +9,6 @@ __pycache__/
 
 # 完整表体积大(38MB), 不入库; 61节点精简版在 model/
 vc_table_*.npz
+
+# 建表备份(20MB 级)
+*.prev*
