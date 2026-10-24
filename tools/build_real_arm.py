@@ -30,6 +30,12 @@ os.environ.setdefault("TC_NO_JIT", "1")
 from ik_table import build_table, save_table          # noqa: E402
 from tendon_coupling import build_arm                  # noqa: E402
 
+try:                                                    # 标定值（实机臂）
+    from tdcr_model import CALIB as _C
+    _C = dict(EI=float(_C["EI"]), EA=float(_C["EA"]))
+except Exception:                                       # 无标定时退回晶胞推导值
+    _C = None
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -40,7 +46,7 @@ def main():
     ap.add_argument("--no-save", action="store_true", help="只跑不存盘（试算）")
     a = ap.parse_args()
 
-    ca, cb, P = build_arm()
+    ca, cb, P = build_arm(**({"EI": _C["EI"], "EA": _C["EA"]} if _C else {}))
     print(f"实机臂: EI={P.EI:.4g} N·m²  EA(k_rod)={P.k_rod:.4g} N  "
           f"L={P.L_total*1e3:.0f}mm  r_disk={P.r_disk*1e3:.0f}mm  "
           f"α={ca.alpha_deg:.3f}°  N_long={ca.N_long:.0f}", flush=True)
