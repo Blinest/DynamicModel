@@ -101,9 +101,10 @@ def _table_stats(path):
 # ────────────────────────────── pack ──────────────────────────────
 def cmd_pack(a):
     taus = [float(t) for t in a.tau]
+    prefix = getattr(a, "prefix", "vc_table_")
     files = []
     for t in taus:
-        p = os.path.join(ROOT, f"vc_table_{t:g}.npz")
+        p = os.path.join(ROOT, f"{prefix}{t:g}.npz")
         if not os.path.exists(p):
             sys.exit(f"缺表 {p}；先跑 `python main.py build {t}` 或用 `make` 子命令")
         files.append((t, p))
@@ -225,6 +226,8 @@ def main():
         s.add_argument("--tau", type=float, nargs="+", default=[20.0, 40.0],
                        help="各表的 τmax（N），默认 20 40")
         s.add_argument("--out", default="tdcr_model.tdcrmodel")
+        s.add_argument("--prefix", default="vc_table_",
+                       help="表文件名前缀；实机臂用 vc_table_real_")
         if name == "make":
             s.add_argument("--n", type=int, default=900, help="每张表的采样数")
             s.add_argument("--force", action="store_true", help="强制重建已有表")
