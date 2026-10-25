@@ -37,6 +37,10 @@ import numpy as np
 
 MAGIC = b"TDCRMOD1"
 VERSION = 1
+# KKB1 每样本 183 个 float32 的排列方式：
+#   "interleaved" = A: kx0,ky0,kz0, kx1,ky1,kz1, ...
+#   "planar"      = B: kx0..kx60, ky0..ky60, kz0..kz60
+KK_ORDER = "interleaved"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -64,9 +68,13 @@ def _sections(raw_npz, tag):
         m = int(z["kK"].shape[1])
         out.append(("KSB1", struct.pack("<II", n, m) +
                     _f32(z["kS"]).tobytes()))
+        _kk = z["kK"]
+        if KK_ORDER == "planar":
+            _kk = np.transpose(_kk, (0, 2, 1))     # (n,m,3)->(n,3,m)：三轴分块
         out.append(("KKB1", struct.pack("<II", n, m) +
-                    _f32(z["kK"]).tobytes()))
+                    _f32(_kk).tobytes()))
         meta["curvature"] = dict(section=["KSB1", "KKB1"], nodes=m,
+                                 kk_order=KK_ORDER,
                                  s_range=[round(float(z["kS"].min()), 6),
                                           round(float(z["kS"].max()), 6)],
                                  kappa_norm_max=round(float(
@@ -136,7 +144,12 @@ def main():
     ap.add_argument("--prefix", default="vc_table_")
     ap.add_argument("--out", default="tdcr_model.tdcrmodel")
     ap.add_argument("--dump", default=None, help="只解析已有包")
+    ap.add_argument("--kk-order", choices=("interleaved", "planar"),
+                    default="interleaved",
+                    help="KKB1 排列: interleaved(A, kx0,ky0,kz0,…) / planar(B, kx0..kx60,ky0..ky60,…)")
     a = ap.parse_args()
+    global KK_ORDER
+    KK_ORDER = a.kk_order
     if a.dump:
         return dump(a.dump)
     return build(a.tau, a.prefix, a.out)
