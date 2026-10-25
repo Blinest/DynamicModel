@@ -56,8 +56,23 @@ def _sections(raw_npz, tag):
                 tau_max=float(z["tau"].max()),
                 bend_deg=[round(float(ang.min()), 2), round(float(ang.max()), 2)],
                 dtype="float32", order="C", layout="n|tau(n,6)|dL(n,6)")
-    return [("KTB1", ktb), ("PTB1", ptb),
-            ("META", json.dumps(meta, ensure_ascii=False).encode("utf-8"))]
+    out = [("KTB1", ktb), ("PTB1", ptb)]
+    # ── 曲率段（可选，源表有 kS/kK 时加）──
+    # KSB1 = u32 n | u32 m | kS(n,m)   f32   弧长网格 [m]
+    # KKB1 = u32 n | u32 m | kK(n,m,3) f32   曲率矢量 [1/m]
+    if "kK" in z.files and "kS" in z.files:
+        m = int(z["kK"].shape[1])
+        out.append(("KSB1", struct.pack("<II", n, m) +
+                    _f32(z["kS"]).tobytes()))
+        out.append(("KKB1", struct.pack("<II", n, m) +
+                    _f32(z["kK"]).tobytes()))
+        meta["curvature"] = dict(section=["KSB1", "KKB1"], nodes=m,
+                                 s_range=[round(float(z["kS"].min()), 6),
+                                          round(float(z["kS"].max()), 6)],
+                                 kappa_norm_max=round(float(
+                                     np.linalg.norm(z["kK"], axis=2).max()), 4))
+    out.append(("META", json.dumps(meta, ensure_ascii=False).encode("utf-8")))
+    return out
 
 
 def build(taus, prefix, out):
