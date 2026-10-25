@@ -35,7 +35,8 @@ import struct
 import subprocess
 import sys
 
-MAGIC = b"TDCRMDL1"
+MAGIC = b"TDCRMOD1"                       # 后端要求的 magic
+MAGIC_ALIASES = (MAGIC, b"TDCRMDL1")      # 兼容早先生成的包
 FORMAT_BIN = "tdcrmodel-bin/2"
 FORMAT_ZIP = "tdcrmodel/1"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -102,7 +103,7 @@ def _read_container(path):
     with open(path, "rb") as f:
         head = f.read(8)
         f.seek(0)
-        if head == MAGIC:
+        if head in MAGIC_ALIASES:
             f.read(8)
             (hlen,) = struct.unpack("<I", f.read(4))
             man = json.loads(f.read(hlen).decode("utf-8"))
