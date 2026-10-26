@@ -58,13 +58,30 @@ def main():
     ap.add_argument("--min-dist", type=float, default=0.02,
                     help="与旧点的最小相对距离（按 τmax 归一化）")
     ap.add_argument("--batch", type=int, default=200)
+    ap.add_argument("--prefix", default="vc_table_",
+                    help="表名前缀；实机臂用 vc_table_real_")
+    ap.add_argument("--real", action="store_true",
+                    help="用 tdcr_model.CALIB 的实机参数（EI=0.045/EA=7e3/L=400/r_disk=5mm）")
     a = ap.parse_args()
 
-    path = f"vc_table_{a.tau:g}.npz"
+    path = f"{a.prefix}{a.tau:g}.npz"
     if not os.path.exists(path):
         sys.exit(f"找不到 {path}")
-    old = load_table(path)
-    P = old.params or default_params()
+    # ⚠ 必须用**建这张表时**的参数，否则新样本会用错刚度算，合并后是同名不同臂
+    if a.real:
+        from tendon_coupling import build_arm
+        from tdcr_model import CALIB
+        _ca, _cb, P = build_arm(EI=CALIB["EI"], EA=CALIB["EA"],
+                                L1=CALIB["L1"], L2=CALIB["L2"],
+                                r_i=CALIB["r_o"], r_disk=CALIB["r_disk"],
+                                n_circ_a=CALIB["n_circ"], n_circ_b=CALIB["n_circ"],
+                                n_long=CALIB["n_long"], E=CALIB["E_mat"],
+                                t_strut=CALIB["t_wall"],
+                                n_p=CALIB["n_p"], n_d=CALIB["n_d"], lattice=False)
+        old = load_table(path, params=P)
+    else:
+        old = load_table(path)
+        P = old.params or default_params()
     n_old = len(old.recs)
     print(f"[1] 旧表 {path}: {n_old} 点  EI={P.EI:.4g} k_rod={P.k_rod:.4g}", flush=True)
 
