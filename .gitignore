@@ -12,3 +12,6 @@ vc_table_*.npz
 
 # 建表备份(20MB 级)
 *.prev*
+
+# 实机表入库(约6MB); 默认臂表留在 model_default/ 不入库
+!model/vc_table_real_*.npz
