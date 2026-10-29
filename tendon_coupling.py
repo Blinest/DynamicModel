@@ -296,6 +296,7 @@ class SDMParams:
                  lattice=True, C0=C0_DEFAULT, L_strut=L_STRUT_DEFAULT,
                  EA=None, cells=None,
                  mu_friction=0.0, friction_branch=1.0,
+                 g_world=(0.0, 0.0, -9.81),
                  L1=None, L2=None, alpha_deg=None, E=None, A=None, r_i=None,
                  t_strut=None, k_rod_ext=0.0):
         """⚠ 2026-10-18: 臂体几何/材料也进对象了 —— `L1/L2/alpha_deg/E/A/r_i/t_strut`。
@@ -328,6 +329,9 @@ class SDMParams:
         #   friction_branch=+1 加载支 / -1 卸载支 (两者之差即滞回环宽度)。
         self.mu_friction = float(mu_friction)
         self.friction_branch = float(friction_branch)
+        # 重力方向（世界系）。numpy 的 forward 与 numba 的 pack_params 都读它；
+        # 水平安装必须设 (-9.81, 0, 0) 之类，否则横向重力会被当成轴向。
+        self.g_world = tuple(float(x) for x in np.asarray(g_world, float).reshape(3))
         # 菱形晶胞非线性弯曲刚度: 开启后 EI 随曲率变化 (笔记原式, 无 seed/floor)
         self.lattice = lattice; self.C0 = C0; self.L_strut = L_strut
         # ── 臂体几何/材料 (None → 回退模块常量; 设了以它为准) ──
@@ -1807,6 +1811,8 @@ class TendonCouplingModel:
         self.lattice = bool(lattice)
         self.F_tip = np.asarray(F_tip, float).reshape(3)
         self.g_world = np.asarray(g_world, float).reshape(3)
+        # 同步给 params：numba 路径（pack_params）读 params.g_world，不读 self.g_world
+        self.params.g_world = tuple(float(x) for x in self.g_world)
         self.R_mount = np.eye(3) if R_mount is None else np.asarray(R_mount, float).reshape(3, 3)
         self.h_tau = float(h_tau)
         self.tol = float(tol)

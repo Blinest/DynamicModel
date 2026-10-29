@@ -368,6 +368,7 @@ def _pack_signature(params):
         float(getattr(params, "mu_friction", 0.0)),
         float(getattr(params, "friction_branch", 1.0)),
         float(getattr(params, "k_rod_ext", 0.0) or 0.0),
+        *[float(getattr(params, "g_world", (0.0, 0.0, -9.81))[i]) for i in range(3)],
         len(cells), *[float(v) if v is not None else -1.0 for v in c],
     )
 
@@ -387,7 +388,10 @@ def pack_params(params):
                                  L_STRUT_DEFAULT, C0_DEFAULT)
     ri_all = np.ascontiguousarray(_wire_r_vec(params.r_disk))
     rho_total = params.rhoA + params.disk_mass / L
-    few = np.array([0.0, 0.0, -rho_total * 9.81])
+    # ⚠ 2026-10-30: 重力方向必须听 params.g_world（默认 (0,0,-9.81)）。
+    #   原实现写死 -z ⇒ 水平安装时横向重力从未进 numba 路径（numpy 的 forward 已修）。
+    _g = np.asarray(getattr(params, "g_world", (0.0, 0.0, -9.81)), float).reshape(3)
+    few = rho_total * _g
     cells = getattr(params, "cells", None)
 
     def _seg(cn):
