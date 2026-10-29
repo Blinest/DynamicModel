@@ -474,8 +474,12 @@ def forward(x, tau, F_tip, g_world, R_mount, params, want_curve=False):
         # 每段分布重力(世界)转体坐标: fe_world = [0,0,−ρg]−盘重均摊
         for j in range(nsub):
             fe_w = np.zeros(3)
-            fe_w[2] = -params.rhoA * 9.81
-            fe_w[2] -= (params.disk_mass * 9.81) / L
+            # ⚠ 2026-10-30: 原实现写死 [0,0,−ρg], **忽略 g_world** ⇒ 水平安装
+            #   的重力横向分量根本没进来, 所有"水平"算例实际是竖直臂(重力轴向)。
+            #   改为按 g_world 方向生成体分布力: fe_w = −ρ_total · g_world
+            _rho_total = float(params.rhoA) + float(params.disk_mass) / float(L)
+            if _rho_total > 0.0:
+                fe_w = _rho_total * np.asarray(g_world, float).reshape(3)   # f = ρ·g
             fe_b = R.T @ fe_w
             # 菱形晶胞刚度 EI(|κ|) 随当前曲率变化
             Kbt = params.Kbt(k, kappa_xy=u[:2])
