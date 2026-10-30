@@ -36,8 +36,28 @@ from tendon_coupling import build_arm, shooting, _wire_geom_len_batch, _L0_wire
 __all__ = ["TdcrModel", "CALIB"]
 
 # ── 标定值（2026-10-19，由两个实测量反标）──────────────────────────
+# ── 2026-10-30 实测标定（30° 四方位，真机数据）────────────────────────────
+# 角度: EI 已按实测反标(0.045→0.102), 模型角与实测角 1:1, 不再需要角度增益。
+# 方位: 实测方向 120/180/250/320 对应指令 0/90/180/270
+#       ⇒ φ_实测 = 0.744·φ_指令 + 117.0° (残差 ≤4°)
+#   纯旋转在模型里表达不了(只改丝方位角 ⇒ 增益恒为 1), 所以放在这一层做指令映射。
+CAL_DIR_GAIN = 0.744        # dφ_实测 / dφ_指令
+CAL_DIR_OFFSET = 117.0      # deg
+
+
+def dir_to_cmd(dir_target_deg):
+    """目标方位(实测口径) → 下发方位(模型口径)。"""
+    return (float(dir_target_deg) - CAL_DIR_OFFSET) / CAL_DIR_GAIN
+
+
+def dir_to_actual(dir_cmd_deg):
+    """下发方位(模型口径) → 预期实测方位。"""
+    return float(dir_cmd_deg) * CAL_DIR_GAIN + CAL_DIR_OFFSET
+
+
 CALIB = dict(
-    EI=0.045,          # N·m²  抗弯（由 20° 下垂反标）
+    EI=0.0824,         # N·m²  抗弯（2026-10-30 由 30° 四方位弯曲实测反标：
+                       #   逐行 EI=0.045·模型角/实测角 ⇒ 0.0762/0.0847/0.0823/0.0829, 取均值)
     EA=7.0e3,          # N     抗轴（由 90° 时 10.5 mm 反标）
     L1=0.200, L2=0.200,
     r_o=0.008,         # 外半径 ⇒ 外径 16 mm
