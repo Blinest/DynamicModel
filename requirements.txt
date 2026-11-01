@@ -1,7 +1,27 @@
 # DynamicModel — 运行依赖
-# 安装: python -m pip install -r requirements.txt
-numpy>=1.24            # 必需
-numba>=0.58            # 建议: JIT 加速 (缺失时自动回退纯 numpy, 可设 TC_NO_JIT=1 强制回退)
-matplotlib>=3.7        # 绘图 (plotting.py / tools/plot_*.py); 缺失时 tools/plot_friction.py 回退 Pillow
-pillow>=10             # tools/simpleplot.py 极简绘图后端 (matplotlib 缺失时的兜底)
-scipy>=1.10            # 可选: ik_table 的 KDTree 近邻加速 (缺失时自动退化为暴力搜索)
+# ---------------------------------------------------------------------------
+# 安装:      python -m pip install -r requirements.txt
+# 最小可用:  只装 numpy 即可跑纯 numpy 参考实现（慢 10 倍以上）
+# 生产/建表: 建议全装（numba 加速 + scipy 近邻加速）
+#
+# 环境变量:
+#   TC_NO_JIT=1    强制走纯 numpy 参考实现（对拍/调试用）
+#   TC_THREADS=N   限制 numba 线程数（默认自动）
+# ---------------------------------------------------------------------------
+
+# ── 必需 ────────────────────────────────────────────────────────────────
+numpy>=1.24            # 全部数值计算
+
+# ── 强烈建议 ────────────────────────────────────────────────────────────
+numba>=0.58            # JIT 加速 _jit_core / _jit_integrate；缺失时自动回退纯 numpy
+matplotlib>=3.7        # 绘图: plotting.py / tools/make_figs_*.py / tools/plot_*.py
+                       #   缺字体时中文会变方框, Linux 可装 fonts-noto-cjk
+
+# ── 可选（缺失时自动退化，不影响正确性）──────────────────────────────────
+scipy>=1.10            # ik_table 的 KDTree 最近邻；缺失时退化为暴力搜索
+pillow>=10             # tools/simpleplot.py 极简绘图后端（matplotlib 缺失时兜底）
+
+# ── 说明 ────────────────────────────────────────────────────────────────
+# 无 pandas 依赖：表格一律用 csv 标准库 / numpy 读写
+# 无 GPU 依赖：全部 CPU
+# yaml / requests 等未使用
