@@ -44,6 +44,9 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--batch", type=int, default=100)
     ap.add_argument("--no-save", action="store_true", help="只跑不存盘（试算）")
+    ap.add_argument("--ckpt", default=None,
+                    help="断点文件路径（不给则自动 <表名>.ckpt）; 中断后重跑同一命令即续建")
+    ap.add_argument("--no-ckpt", action="store_true", help="禁用断点")
     a = ap.parse_args()
 
     ca, cb, P = build_arm(**({"EI": _C["EI"], "EA": _C["EA"]} if _C else {}))
@@ -58,7 +61,9 @@ def main():
         recs = build_table(N=a.n, tau_max=t, params=P, seed=a.seed,
                            batch_size=a.batch,
                            continuation=tuple(np.linspace(0.1, 1.0, 16)),
-                           verbose=True)
+                           verbose=True,
+                           ckpt=(None if a.no_ckpt else
+                                 (a.ckpt or f"vc_table_real_{t:g}.ckpt")))
         dt = (time.time() - t0) / 60
         print(f"  τmax={t:g}N: 入库 {len(recs)}/{a.n}  用时 {dt:.1f} min  "
               f"({dt*60/max(len(recs),1):.1f} s/点)", flush=True)
@@ -67,6 +72,10 @@ def main():
         path = f"vc_table_real_{t:g}.npz"
         save_table(path, recs, params=P)
         print(f"  已存 {path}  {os.path.getsize(path)/1e6:.1f} MB", flush=True)
+        _ck = a.ckpt or f"vc_table_real_{t:g}.ckpt"
+        if not a.no_ckpt and os.path.exists(_ck):
+            os.remove(_ck)                   # 存好表后清断点
+            print(f"  已清断点 {_ck}", flush=True)
     return 0
 
 

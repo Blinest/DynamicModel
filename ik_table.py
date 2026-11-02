@@ -390,7 +390,7 @@ def record_from_batch(i, tau, params, out, curves):
 
 def build_table(N=2000, tau_max=8.0, params=None, seed=0,
                 verbose=True, log_every=None, batch_size=256,
-                continuation=None, taus=None):
+                continuation=None, taus=None, ckpt=None):
     """§10.2 建表: τ 空间 LHS 采样 + 批量 VC 打靶 + 曲线自洽 ΔL.
 
     continuation: 如 (0.5, 0.75, 1.0) —— **延拓法**. 高 τmax 时批量打靶
@@ -415,12 +415,34 @@ def build_table(N=2000, tau_max=8.0, params=None, seed=0,
     # 不影响结果。Z 序只在"逐点热启动链"里才有用 (见 space_filling_order 注释)。
 
     records = [None] * N
+    # ── checkpoint 断点续建 (2026-11-02) ──────────────────────────────
+    # 历史问题: 无 checkpoint, 建表被 timeout 杀掉会丢**全部**新点(已踩 3 次,
+    # 分别丢 374/400/1500 点)。给 ckpt 路径 ⇒ 每批落盘; 重启自动跳过已完成索引。
+    import os as _os
+    import pickle as _pk
+    _ck = {"N": N, "tau_all": np.asarray(tau_all).copy(), "records": {}}
+    if ckpt and _os.path.exists(ckpt):
+        try:
+            with open(ckpt, "rb") as f:
+                _old = _pk.load(f)
+            if (_old.get("N") == N
+                    and np.allclose(_old.get("tau_all"), np.asarray(tau_all))):
+                _ck["records"].update(_old["records"])
+                print(f"  [ckpt] 续建: 已有 {len(_ck['records'])}/{N} 点", flush=True)
+            else:
+                print("  [ckpt] 采样网格与旧断点不一致, 忽略断点", flush=True)
+        except Exception as e:
+            print(f"  [ckpt] 断点读取失败 ({e}), 从头开始", flush=True)
     if log_every is None:
         log_every = max(1, N // 10)
     n_done = 0
     for s in range(0, N, batch_size):
         e = min(s + batch_size, N)
         idx = np.arange(s, e)
+        if _ck["records"]:
+            idx = np.array([i for i in idx if i not in _ck["records"]], dtype=int)
+            if len(idx) == 0:
+                continue
         tb = tau_all[idx]
         # ---- 延拓 ----
         # continuation=None 时不做阶梯放大, 直接解 tb —— 配合 taus= 给出的
@@ -466,6 +488,13 @@ def build_table(N=2000, tau_max=8.0, params=None, seed=0,
                 continue
             records[i] = rec
         n_done += len(idx)
+        if ckpt:
+            _ck["records"].update({int(i): records[int(i)] for i in idx
+                                   if records[int(i)] is not None})
+            _tmp = ckpt + ".tmp"
+            with open(_tmp, "wb") as _f:
+                _pk.dump(_ck, _f, protocol=4)
+            _os.replace(_tmp, ckpt)          # 原子替换, 防半截文件
         if verbose and (n_done % log_every < len(idx) or n_done == N):
             done = [r for r in records if r is not None]
             tips = np.array([r["p_tip"] for r in done])
