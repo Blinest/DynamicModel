@@ -54,7 +54,10 @@ def metrics(o):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mu-max", type=float, default=0.20)
-    ap.add_argument("--dmu", type=float, default=0.02)
+    # ⚠ 2026-11-06 实测: dμ=0.02 时 μ≥0.02 打满 80 次 Newton 仍不收敛(κ 跳到 131/138 的垃圾解);
+    #   dμ=0.005 时 μ=0.005/0.010/0.015/0.020 全部收敛(8/20/40/60 次)。
+    #   与雅可比无关: TC_JAC_MODE=central 在 dμ=0.02 下同样不收敛 ⇒ 纯续步步长问题。
+    ap.add_argument("--dmu", type=float, default=0.005)
     ap.add_argument("--branch", type=float, default=1.0)
     ap.add_argument("--T0", type=float, default=10.0)
     ap.add_argument("--A", type=float, default=3.4, help="差动幅值 N")
