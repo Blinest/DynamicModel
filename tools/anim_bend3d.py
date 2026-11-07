@@ -38,8 +38,9 @@ B_MM = np.pi * R_OUT * 1e3 / 3.0        # 8.377 周向半节距（由 N_circ=3 �
 # ── 两种变体（2026-11-08 用户描述）──────────────────────────────
 #   段1（靠基座, s∈[0,200]）：α 增大（菱形更"高"）、只给**轴向尖角**加圆角
 #   段2（s∈[200,400]）     ：α 减小（菱形更"扁"）、**所有角**都加圆角
-ALPHA_A, ALPHA_B = 34.0, 28.0           # deg（待实测确认）
-R_FIL_A, R_FIL_B = 2.0, 2.0             # mm（1.2 在全臂视图里只有 2-3 px，看不清）
+ALPHA_A, ALPHA_B = 34.0, 20.0           # deg（定案：段1 增大、段2 减小）
+R_AX = 5.0                  # mm  轴向尖角圆角（两段都 5.0）
+R_SD_A, R_SD_B = 0.0, 1.0    # mm  侧向圆角：段1 不倒（保持尖），段2 1.0
 N_INT = 240                      # 骨架积分点数
 
 
@@ -217,7 +218,6 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     for i in range(len(rows) - 1):
         r = rows[i]
         a_mm, b_mm = r["a"], r["b"]
-        rho = (R_FIL_A if r["seg"] == 0 else R_FIL_B)
         # 该行的菱形：中心在 (s+a, θ_c)，四角 = 上下尖角 + 左右侧角
         for jc in range(6):
             th_c = jc * np.pi / 3
@@ -229,8 +229,9 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                 ((-b_mm, 0.0), ((+b_mm, -a_mm), (+b_mm, +a_mm)), "side"),
             ]
             for (dc, ds), (e1, e2), kind in corners:
-                if r["seg"] == 0 and kind != "tip":
-                    continue                  # 段1：只填轴向尖角
+                rho = R_AX if kind == "tip" else (R_SD_A if r["seg"] == 0 else R_SD_B)
+                if rho <= 0:
+                    continue                  # 段1 侧向不倒也跳过
                 w = wedge(e1, e2, rho)
                 if w is None:
                     continue
