@@ -117,21 +117,40 @@ def build_mask():
 def render(ax, theta_total, nx, ny, mat, title):
     ss, kf = M.kappa_profile(theta_total)
     sg, P, Rm = M.build_frames(kf, ss)
-    quads = []
-    ii = np.where(mat.ravel())[0]
-    for k in ii:
+    r_o = M.R_OUT + 0.03e-3
+    r_i = M.R_IN - 0.03e-3
+    q_out, q_in, walls = [], [], []
+
+    def P3(xx, yy, r):
+        return M.surface(P, Rm, sg, yy * 1e-3, xx / R_OUT_MM, r)
+
+    for k in np.where(mat.ravel())[0]:
         ix, iy = k % nx, k // nx
         x0, x1 = ix * DS, (ix + 1) * DS
         y0, y1 = iy * DS, (iy + 1) * DS
-        pts = []
-        for xx, yy in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
-            pts.append(M.surface(P, Rm, sg, yy * 1e-3, xx / R_OUT_MM,
-                                 M.R_OUT + 0.03e-3))
-        quads.append(pts)
-    quads = [q for q in quads if np.isfinite(np.asarray(q)).all()]
-    pc = Poly3DCollection(quads, facecolor=RED, edgecolor="none", linewidth=0,
-                          alpha=1.0)
-    ax.add_collection3d(pc)
+        c = ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+        q_out.append([P3(xx, yy, r_o) for xx, yy in c])
+        q_in.append([P3(xx, yy, r_i) for xx, yy in c])
+        # 孔壁：邻格是孔（或越界）就在这条边上补一片
+        for (dx, dy), (a_, b_) in (((1, 0), ((x1, y0), (x1, y1))),
+                                   ((-1, 0), ((x0, y0), (x0, y1))),
+                                   ((0, 1), ((x0, y1), (x1, y1))),
+                                   ((0, -1), ((x0, y0), (x1, y0)))):
+            jx, jy = ix + dx, iy + dy
+            is_hole = (jx < 0 or jx >= nx or jy < 0 or jy >= ny
+                       or not mat[jy, jx])
+            if not is_hole:
+                continue
+            walls.append([P3(a_[0], a_[1], r_o), P3(b_[0], b_[1], r_o),
+                          P3(b_[0], b_[1], r_i), P3(a_[0], a_[1], r_i)])
+    q_out = [q for q in q_out if np.isfinite(np.asarray(q)).all()]
+    q_in = [q for q in q_in if np.isfinite(np.asarray(q)).all()]
+    walls = [q for q in walls if np.isfinite(np.asarray(q)).all()]
+    for quads, col in ((q_out, RED), (q_in, "#7A3234"), (walls, "#8E4446")):
+        if quads:
+            pc = Poly3DCollection(quads, facecolor=col, edgecolor="none",
+                                  linewidth=0, alpha=1.0)
+            ax.add_collection3d(pc)
     pmin, pmax = P.min(0), P.max(0)
     ctr = 0.5 * (pmin + pmax)
     half = 0.5 * float(np.max(pmax - pmin)) + 0.014
@@ -141,8 +160,8 @@ def render(ax, theta_total, nx, ny, mat, title):
     ax.set_box_aspect((1, 1, 1))
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
-    ax.set_title(f"{title}（材料格 {mat.mean()*100:.0f}%，{len(quads)} 片）",
-                 fontsize=9, color=RED)
+    ax.set_title(f"{title}（材料 {mat.mean()*100:.0f}%；外 {len(q_out)} / 内 {len(q_in)} / 孔壁 {len(walls)}）",
+                 fontsize=8)
 
 
 def main():
