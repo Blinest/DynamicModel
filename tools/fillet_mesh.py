@@ -79,7 +79,8 @@ def main():
     pa = 2 * a
     s_lo, s_hi = 0.0, N_ROW * pa
     ds = 0.30
-    nx = int(CIRC / ds) + 1
+    WINDOW_CIRC = CIRC * 0.5          # 只画前半周，孔才透得出来
+    nx = int(WINDOW_CIRC / ds) + 1
     ny = int((s_hi - s_lo) / ds) + 1
     gx, gy = np.meshgrid((np.arange(nx) + 0.5) * ds,
                          s_lo + (np.arange(ny) + 0.5) * ds)
@@ -122,7 +123,7 @@ def main():
         return quads
 
     q_out = surf_quads(R_OUT, +0.03)
-    q_in = surf_quads(R_IN, -0.03)
+    q_in = []          # 不画内表面：否则透过孔看到对面内壁，视觉上像没有镂空
     # 孔壁：材料格与孔格的公共边
     wall = []
     m2 = mat.reshape(ny, nx)
@@ -152,7 +153,7 @@ def main():
 
     fig = plt.figure(figsize=(11, 6.2))
     ax = fig.add_subplot(111, projection="3d")
-    for quads, col, alp in ((q_out, RED, 1.0), (q_in, "#7A3234", 1.0), (wall, "#8E4446", 1.0)):
+    for quads, col, alp in ((q_out, RED, 1.0), (wall, "#8E4446", 1.0)):
         if not quads:
             continue
         pc = Poly3DCollection(quads, facecolor=col, edgecolor="none",
@@ -161,7 +162,7 @@ def main():
     ax.set_xlim(-13, 13); ax.set_ylim(-13, 13); ax.set_zlim(-1, s_hi + 1)
     ax.set_box_aspect((1, 1, s_hi / 26.0))
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
-    ax.view_init(elev=16, azim=-62)
+    ax.view_init(elev=14, azim=-90)
     ax.set_title(f"掩膜法渲染：段1 α={SEG[0]['alpha']}° 轴向R={SEG[0]['rho_ax']}"
                  f"（材料 {mat.mean()*100:.1f}%）", fontsize=9, color=RED)
     fig.tight_layout()
