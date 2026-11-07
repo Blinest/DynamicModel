@@ -80,6 +80,44 @@ def band(p0, p1, w=W_STRUT):
     return np.array([p0 + n, p1 + n, p1 - n, p0 - n])
 
 
+def node_fillet_polys(cx, cy, a, rho=RHO, h=H_OFF, n=9):
+    """节点处 4 个扇区的切线圆角。
+
+    每个扇区夹在两条筋的**内边线**之间（各内缩 h=w/2）：
+        孔角 V = node + bis·(h/sin(φ/2))
+        切点   t = ρ/tan(φ/2)，圆心 O = V + bis·(ρ/sin(φ/2))
+        填充 = [V, P1, 圆弧…, P2]  ⇒ 与两条内边线严格相切
+    返回 (中心小块, [4 个楔形])。
+    """
+    dirs = [np.array([+B, +a]), np.array([-B, +a]),
+            np.array([-B, -a]), np.array([+B, -a])]
+    ang = [np.arctan2(d[1], d[0]) for d in dirs]
+    order = np.argsort(ang)
+    dirs = [dirs[k] / np.linalg.norm(dirs[k]) for k in order]
+    Vs, wedges = [], []
+    for k in range(4):
+        u1, u2 = dirs[k], dirs[(k + 1) % 4]
+        phi = float(np.arccos(np.clip(u1 @ u2, -1, 1)))
+        bis = u1 + u2
+        bis /= np.linalg.norm(bis)
+        V = np.array([cx, cy]) + bis * (h / np.sin(phi / 2))
+        Vs.append(V)
+        if rho > 0:
+            t = rho / np.tan(phi / 2)
+            d = rho / np.sin(phi / 2)
+            P1, P2 = V + u1 * t, V + u2 * t
+            O = V + bis * d
+            a1 = np.arctan2((P1 - O)[1], (P1 - O)[0])
+            a2 = np.arctan2((P2 - O)[1], (P2 - O)[0])
+            da = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
+            arc = [O + rho * np.array([np.cos(a1 + da * q), np.sin(a1 + da * q)])
+                   for q in np.linspace(0, 1, n)]
+            wedges.append(np.array([V] + [P1] + arc + [P2]))
+        else:
+            wedges.append(None)
+    return np.array(Vs), wedges
+
+
 def panel(ax, alpha, fillets, title):
     """白底（=孔），材料只画成 1.5 mm 细带 + 节点圆盘。
 
@@ -114,11 +152,15 @@ def panel(ax, alpha, fillets, title):
             cx, cy = m * B, n * a
             is_tip = (n % 2 == 0)          # 轴向尖角节点
             filleted = fillets[1] if is_tip else fillets[0]
-            # 节点块：先填满 4 条筋的交汇缺口（半宽 w/2 的对角 = w/2·√2），
-            # 倒圆的节点再按 R 放大 ⇒ 网络连续、无"筋缺失"
-            r = W_STRUT * 0.7071 + (RHO if filleted else 0.0)
-            ax.add_patch(plt.Circle((cx, cy), r, facecolor=RED,
-                                    edgecolor="none", zorder=3))
+            # 中心小块：把 4 条筋的交汇处填实（V 四边形的内接区域）
+            Vs, wedges = node_fillet_polys(cx, cy, a, rho=(RHO if filleted else 0.0))
+            ax.add_patch(Polygon(Vs, closed=True, facecolor=RED,
+                                 edgecolor="none", zorder=3))
+            if filleted:
+                for wd in wedges:
+                    if wd is not None:
+                        ax.add_patch(Polygon(wd, closed=True, facecolor=RED,
+                                             edgecolor="none", zorder=3))
     ax.set_xlim(0, CIRC)
     ax.set_ylim(0, WIN)
     ax.set_aspect("equal")
@@ -143,7 +185,7 @@ def main():
                "① 段1（靠基座）：只倒轴向尖角")
     f2 = panel(axes[1], 28.0, [True, True, True, True],
                "② 段2：四角全倒")
-    fig.suptitle(f"臂体平面展开图：红=材料（筋宽 {W_STRUT} mm，节点圆盘按是否倒圆分大小），白=开孔"
+    fig.suptitle(f"臂体平面展开图：红=材料（筋宽 {W_STRUT} mm；节点圆角为与两条内边线相切的圆弧 R={RHO}）"
                  f"切线圆角 R={RHO} mm", fontsize=10)
     fig.tight_layout()
     fig.savefig("fig_unwrap.png", dpi=170, bbox_inches="tight")
