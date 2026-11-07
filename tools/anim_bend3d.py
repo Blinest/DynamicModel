@@ -152,9 +152,10 @@ def draw(ax, kfun, ss, A, theta_total):
                 color=RED, lw=0.9, alpha=0.85)
 
     span = rows[-1]["s"]
-    pmin, pmax = P.min(0) * 1e3, P.max(0) * 1e3     # mm
+    # ⚠ 必须用米：四边形坐标是米制，用毫米写 xlim 会把所有几何甩出视野（画面空白）
+    pmin, pmax = P.min(0), P.max(0)
     ctr = 0.5 * (pmin + pmax)
-    half = 0.5 * float(max(pmax - pmin)) + 12.0
+    half = 0.5 * float(np.max(pmax - pmin)) + 0.012
     ax.set_xlim(ctr[0] - half, ctr[0] + half)
     ax.set_ylim(ctr[1] - half, ctr[1] + half)
     ax.set_zlim(ctr[2] - half, ctr[2] + half)
