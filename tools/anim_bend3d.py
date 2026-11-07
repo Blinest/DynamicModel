@@ -149,8 +149,11 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     for k in range(6):
         thk = k * np.pi / 3
         pts = np.array([surface(P, Rm, sg, sv, thk, R_DISK) for sv in svals])
-        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=GREEN, lw=0.8, alpha=0.85,
-                zorder=6, solid_capstyle="round")
+        # ⚠ matplotlib 的 3D 深度排序对 Line3D vs Poly3DCollection 不可靠，
+        #   给丝设高 zorder 会盖在筋上面。改为不提 zorder + 低透明度：
+        #   丝只在孔洞处隐约可见，绝不压住臂体。
+        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=GREEN, lw=0.7, alpha=0.40,
+                solid_capstyle="round")
 
     # 固定基座：s=0 处一块方形夹持板（向下 10 mm），并用剖面线示意"固定"
     b = R_OUT * 1.55
