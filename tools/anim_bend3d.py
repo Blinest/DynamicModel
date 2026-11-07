@@ -147,15 +147,6 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                 q = strut(P, Rm, sg, th0, r0["s"], th1, r1["s"])
                 quads += q
                 cols += [RED if dj > 0 else "#6E3234"] * len(q)   # 两组方向用明暗区分
-    if not quads:
-        return
-    pc = Poly3DCollection(quads, edgecolor="#4A2425", linewidth=0.22,
-                          alpha=1.0)
-    pc.set_facecolor([tuple(np.array(matplotlib.colors.to_rgb(c))
-                            * (1.0 if (k // 4) % 2 else 0.72))
-                      for k, c in enumerate(cols)])
-    ax.add_collection3d(pc)
-
     # 端面环 + 6 根丝
     th = np.linspace(0, 2 * np.pi, 60)
     for sv, alpha in ((rows[0]["s"], 0.6), (rows[-1]["s"], 0.6)):
@@ -220,8 +211,7 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
         a_mm, b_mm = r["a"], r["b"]
         # 该行的菱形：中心在 (s+a, θ_c)，四角 = 上下尖角 + 左右侧角
         for jc in range(6):
-            # 菱形中心在相邻两列节点**之间**（节点在 jc·60°，中心在 +30°）
-            th_c = jc * np.pi / 3 + np.pi / 6
+            th_c = jc * np.pi / 3        # 菱形中心与节点同角度（上下尖角都在该角上）
             corners = [
                 # (角相对中心 (dθ, ds), 两条邻边方向)
                 ((0.0, +a_mm), ((-b_mm, -a_mm), (+b_mm, -a_mm)), "tip"),
@@ -240,12 +230,14 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                 th0 = th_c + dc / (R_OUT * 1e3)
                 # 圆角做成有厚度的板：外表面 + 内表面都画，
                 # 否则单一外表面与筋的 R_OUT 面几乎共面，会被深度排序压掉
+                # ⚠ 横向偏移必须除以**当地半径**：筋的宽度是恒定 1.5 mm（3D 里按 perp 向量画），
+                #   若圆角用 q/R_OUT，则在 R_IN 处物理宽度只有 81% ⇒ 内外都不相切。
+                rr_o = R_OUT + 0.06e-3
+                rr_i = R_IN - 0.02e-3
                 ring_o = [surface(P, Rm, sg, sv0 + q[1] * 1e-3,
-                                  th0 + q[0] / (R_OUT * 1e3), R_OUT + 0.06e-3)
-                          for q in w]
+                                  th0 + q[0] / (rr_o * 1e3), rr_o) for q in w]
                 ring_i = [surface(P, Rm, sg, sv0 + q[1] * 1e-3,
-                                  th0 + q[0] / (R_OUT * 1e3), R_IN - 0.02e-3)
-                          for q in w]
+                                  th0 + q[0] / (rr_i * 1e3), rr_i) for q in w]
                 caps.append(ring_o)                 # 外表面
                 caps.append(ring_i[::-1])           # 内表面（反向绕序）
                 # 侧壁：把内外环逐边连起来 => 闭合实体（否则像零厚度片）
@@ -259,6 +251,14 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     if (len(quads), len(caps)) != n0:
         print(f"    [warn] 丢弃非有限几何: quads {n0[0]}->{len(quads)}, "
               f"caps {n0[1]}->{len(caps)}", flush=True)
+    if not quads and not caps:
+        return
+    if quads:
+        pc = Poly3DCollection(quads, edgecolor="none", linewidth=0, alpha=1.0)
+        pc.set_facecolor([tuple(np.array(matplotlib.colors.to_rgb(c))
+                                * (1.0 if (k // 4) % 2 else 0.72))
+                          for k, c in enumerate(cols)])
+        ax.add_collection3d(pc)
     if caps:
         cpc = Poly3DCollection(caps, facecolor="#8E4446", edgecolor="#4A2425",
                                linewidth=0.12, alpha=1.0)

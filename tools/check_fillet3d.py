@@ -53,7 +53,7 @@ def render(ax, theta_total, title):
     for i in range(N_ROW + 1):
         cy = svals[i]
         for j in range(6):
-            th_c = j * np.pi / 3 + np.pi / 6   # 菱形中心在节点之间
+            th_c = j * np.pi / 3        # 菱形中心与节点同角度
             for (dc, ds), (e1, e2), kind in (
                     ((0.0, +a), ((-Bm, -a), (+Bm, -a)), "tip"),
                     ((0.0, -a), ((-Bm, +a), (+Bm, +a)), "tip"),
@@ -78,12 +78,12 @@ def render(ax, theta_total, title):
                 arc = [O + rho * np.array([np.cos(a1 + da * q), np.sin(a1 + da * q)])
                        for q in np.linspace(0, 1, 12)]
                 poly = [V] + [P1] + arc + [P2]
+                ro_r = M.R_OUT + 0.05e-3
+                ri_r = M.R_IN - 0.01e-3
                 ro = [M.surface(P, Rm, sg, cy + p[1] * 1e-3,
-                                th_c + p[0] / (M.R_OUT * 1e3), M.R_OUT + 0.05e-3)
-                      for p in poly]
+                                th_c + p[0] / (ro_r * 1e3), ro_r) for p in poly]
                 ri = [M.surface(P, Rm, sg, cy + p[1] * 1e-3,
-                                th_c + p[0] / (M.R_OUT * 1e3), M.R_IN - 0.01e-3)
-                      for p in poly]
+                                th_c + p[0] / (ri_r * 1e3), ri_r) for p in poly]
                 caps.append(ro)
                 caps.append(ri[::-1])
                 for kk in range(len(ro)):
