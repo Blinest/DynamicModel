@@ -140,6 +140,47 @@ def draw_tube(ax, kfun, ss, A, theta_total):
     ax.set_ylabel("高度 z (mm)")
 
 
+def draw_unrolled(ax, kfun, ss, sign, title):
+    """完整晶胞阵列（全长展开）：x=变形后弧长，y=周向。sign=+1 外壁 / −1 内壁。"""
+    ax.clear()
+    n_cell = 48
+    xi = np.linspace(0.0, L_TOT, n_cell + 1)
+    x = 0.0
+    ycols = [0.0]
+    for j in range(3):
+        a_, b_ = ab(sign * np.interp(xi[0], ss, kfun) * R_O)
+        ycols.append(ycols[-1] + 2 * b_)
+    for i in range(n_cell):
+        sm = 0.5 * (xi[i] + xi[i + 1])
+        eps = sign * float(np.interp(sm, ss, kfun)) * R_O
+        a, b = ab(eps)
+        y = 0.0
+        for j in range(3):
+            v = [(x, y), (x + 2 * a, y + b), (x + 2 * a, y + 2 * b), (x, y + 2 * b)]
+            # 菱形：用节点位置画（上下为轴向、左右为周向）
+            dia = np.array([[x, y + b], [x + a, y + 2 * b],
+                            [x + 2 * a, y + b], [x + a, y]])
+            ax.add_patch(plt.Polygon(dia, closed=True, facecolor=BLUE,
+                                     alpha=0.42, edgecolor=BLUE, lw=0.5))
+            for q in range(4):
+                p0, p1 = dia[q], dia[(q + 1) % 4]
+                ax.plot([p0[0], p1[0]], [p0[1], p1[1]], color=RED, lw=0.8)
+            ax.add_patch(plt.Circle((x, y + b), 0.9, facecolor=GREEN,
+                                    alpha=0.9, edgecolor="none"))
+            y += 2 * b
+        x += 2 * a
+    eps0 = sign * kfun[0] * R_O
+    epsL = sign * kfun[-1] * R_O
+    ax.set_xlim(-5, x + 5)
+    ax.set_ylim(-6, 3 * 2 * B0 + 6)
+    ax.set_aspect("equal")
+    ax.tick_params(labelsize=6)
+    ax.set_xlabel("变形后弧长 (mm)", fontsize=7)
+    ax.set_ylabel("周向 (mm)", fontsize=7)
+    ax.set_title(f"{title}\n根部 ε={eps0*100:+.1f}%  末端 ε={epsL*100:+.1f}%",
+                 fontsize=8, color=GREEN if sign < 0 else RED)
+
+
 def main():
     files, As, TH = [], [], []
     stations = [0.03, 0.13, 0.24, 0.35]
@@ -147,23 +188,11 @@ def main():
         k1 = 3 * A * R_DISK / EI
         theta_total = 0.3 * k1
         ss, kfun = kappa_profile(theta_total)
-        fig, (ax, axc) = plt.subplots(
-            1, 2, figsize=(13.5, 5.4), gridspec_kw=dict(width_ratios=[1.45, 1]))
+        fig, (ax, ax1, ax2) = plt.subplots(
+            1, 3, figsize=(16, 5.2), gridspec_kw=dict(width_ratios=[1.25, 1, 1]))
         draw_tube(ax, kfun, ss, A, theta_total)
-        axc.clear()
-        for m, st in enumerate(stations):
-            eps = -kappa_at(st, kfun, ss) * R_O
-            x0 = m * 2.45 * B0
-            lattice_patch(axc, x0, 0.0, eps)
-            axc.text(x0, -3.5, f"s={st*1e3:.0f} mm\nε={eps*100:+.1f}%",
-                     fontsize=7.5, ha="center", va="top",
-                     color=RED if eps < -0.05 else GREEN)
-        axc.set_xlim(-4, 4 * 2.45 * B0)
-        axc.set_ylim(-11, 4.2 * A0)
-        axc.set_aspect("equal")
-        axc.axis("off")
-        axc.set_title("内侧壁单胞：压缩量从根部向末端递减（变形 ×4 放大）",
-                      fontsize=9, color=GREEN)
+        draw_unrolled(ax1, kfun, ss, -1, "内侧壁（受压，孔沿程变小）")
+        draw_unrolled(ax2, kfun, ss, +1, "外侧壁（受拉，孔沿程变大）")
         fig.tight_layout()
         fn = f"/tmp/_bend_{idx:03d}.png"
         fig.savefig(fn, dpi=100)
