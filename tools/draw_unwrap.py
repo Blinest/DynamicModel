@@ -29,7 +29,7 @@ B = CIRC / 6.0
 W_STRUT = 1.5
 H_OFF = W_STRUT / 2
 RHO = 1.0
-WIN = 55.0
+WIN = 60.0
 
 
 def seg(alpha):
