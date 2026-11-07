@@ -64,7 +64,7 @@ CALIB = dict(
     t_wall=1.5e-3,     # 壁厚
     r_disk=0.005,      # 丝分布半径 ⇒ 分布直径 10 mm
     n_circ=3,
-    n_long=136,
+    n_long=24,
     E_mat=2.0e8,       # PEBA
     mass_total=0.020,  # 臂自重 20 g
     n_p=30, n_d=30,
