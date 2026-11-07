@@ -28,7 +28,8 @@ CIRC = 2 * np.pi * 8.0
 B = CIRC / 6.0
 W_STRUT = 1.5
 H_OFF = W_STRUT / 2
-RHO = 1.0
+RHO_A = 5.0      # 段1：轴向尖角圆角 5 mm（用户指定）
+RHO_B = 1.0      # 段2：四角圆角 1 mm
 WIN = 60.0
 
 
@@ -37,7 +38,7 @@ def seg(alpha):
     return L * np.sin(np.radians(alpha)), L
 
 
-def hole_poly(alpha, fillets, rho=RHO, n=10):
+def hole_poly(alpha, fillets, rho=1.0, n=10):
     a, L = seg(alpha)
     corners = np.array([[B, 0.0], [0.0, a], [-B, 0.0], [0.0, -a]])
     pts = []
@@ -80,7 +81,7 @@ def band(p0, p1, w=W_STRUT):
     return np.array([p0 + n, p1 + n, p1 - n, p0 - n])
 
 
-def node_fillet_polys(cx, cy, a, rho=RHO, h=H_OFF, n=9):
+def node_fillet_polys(cx, cy, a, rho=1.0, h=H_OFF, n=9):
     """节点处 4 个扇区的切线圆角。
 
     每个扇区夹在两条筋的**内边线**之间（各内缩 h=w/2）：
@@ -118,7 +119,7 @@ def node_fillet_polys(cx, cy, a, rho=RHO, h=H_OFF, n=9):
     return np.array(Vs), wedges
 
 
-def panel(ax, alpha, fillets, title):
+def panel(ax, alpha, fillets, title, rho=1.0):
     """白底（=孔），材料只画成 1.5 mm 细带 + 节点圆盘。
 
     ⚠ 之前"红底挖菱形孔"是错的：菱形只占平面一半，**菱形之间的空隙也是孔**，
@@ -153,7 +154,7 @@ def panel(ax, alpha, fillets, title):
             is_tip = (n % 2 == 0)          # 轴向尖角节点
             filleted = fillets[1] if is_tip else fillets[0]
             # 中心小块：把 4 条筋的交汇处填实（V 四边形的内接区域）
-            Vs, wedges = node_fillet_polys(cx, cy, a, rho=(RHO if filleted else 0.0))
+            Vs, wedges = node_fillet_polys(cx, cy, a, rho=(rho if filleted else 0.0))
             ax.add_patch(Polygon(Vs, closed=True, facecolor=RED,
                                  edgecolor="none", zorder=3))
             if filleted:
@@ -174,7 +175,7 @@ def panel(ax, alpha, fillets, title):
     n_nodes = 2.0                       # 每孔占地 4Ba 内有 2 个节点
     mat = (2 * L * W_STRUT + 0.6 * n_nodes * np.pi * node_r ** 2) / (4 * B * a)
     ax.set_title(f"{title}\nα={alpha}°  a={a:.2f}  节距={pa:.2f}  "
-                 f"w={W_STRUT}  R={RHO}\n材料 {mat*100:.0f}% / 开孔 {(1-mat)*100:.0f}%",
+                 f"w={W_STRUT}  R={rho}\n材料 {mat*100:.0f}% / 开孔 {(1-mat)*100:.0f}%",
                  fontsize=9, color=RED)
     return mat
 
@@ -182,11 +183,11 @@ def panel(ax, alpha, fillets, title):
 def main():
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 6.2))
     f1 = panel(axes[0], 34.0, [False, True, False, True],
-               "① 段1（靠基座）：只倒轴向尖角")
-    f2 = panel(axes[1], 28.0, [True, True, True, True],
-               "② 段2：四角全倒")
-    fig.suptitle(f"臂体平面展开图：红=材料（筋宽 {W_STRUT} mm；节点圆角为与两条内边线相切的圆弧 R={RHO}）"
-                 f"切线圆角 R={RHO} mm", fontsize=10)
+               f"① 段1（靠基座）：只倒轴向尖角 R={RHO_A}", rho=RHO_A)
+    f2 = panel(axes[1], 15.0, [True, True, True, True],
+               f"② 段2：α=15°，四角全倒 R={RHO_B}", rho=RHO_B)
+    fig.suptitle(f"臂体平面展开图：红=材料（筋宽 {W_STRUT} mm；节点圆角为与两条内边线相切的圆弧：段1 R={RHO_A}（仅尖角）/ 段2 R={RHO_B}（四角））"
+                 f"段1 R={RHO_A} mm（仅尖角）/ 段2 R={RHO_B} mm（四角）", fontsize=10)
     fig.tight_layout()
     fig.savefig("fig_unwrap.png", dpi=170, bbox_inches="tight")
     print("saved fig_unwrap.png")
