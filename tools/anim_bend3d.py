@@ -186,25 +186,56 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     ax.text(0, 0, zb0 - 0.004, "固定基座", fontsize=7, color="0.25",
             ha="center", zorder=7)
 
-    # ── 圆角：在节点处铺一圈实体圆面，把孔的尖角填圆（可直接看出孔形变化）
+    # ── 圆角：孔的两条边线的**切线圆弧**（凹圆角），填角上的楔形
+    def wedge(u1, u2, rho):
+        u1 = np.asarray(u1, float); u2 = np.asarray(u2, float)
+        u1 /= np.linalg.norm(u1); u2 /= np.linalg.norm(u2)
+        phi = float(np.arccos(np.clip(u1 @ u2, -1, 1)))
+        if phi < 1e-4 or phi > np.pi - 1e-4:
+            return None
+        t = rho / np.tan(phi / 2)
+        d = rho / np.sin(phi / 2)
+        P1, P2 = u1 * t, u2 * t
+        bis = u1 + u2
+        bis /= np.linalg.norm(bis)
+        O = bis * d
+        a1 = np.arctan2((P1 - O)[1], (P1 - O)[0])
+        a2 = np.arctan2((P2 - O)[1], (P2 - O)[0])
+        da = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
+        arc = [O + rho * np.array([np.cos(a1 + da * q), np.sin(a1 + da * q)])
+               for q in np.linspace(0, 1, 7)]
+        return [np.array([0.0, 0.0])] + [P1] + arc + [P2]
+
     caps = []
-    for i, r in enumerate(rows):
-        axial_tip = (i % 2 == 0)
-        if r["seg"] == 0 and not axial_tip:
-            continue                      # 段1：只填轴向尖角
-        rf = (R_FIL_A if r["seg"] == 0 else R_FIL_B) * 1e-3
-        for j in range(6):
-            thj = j * np.pi / 3
-            ring = []
-            for t in np.linspace(0, 2 * np.pi, 14, endpoint=False):
-                dth = rf * np.cos(t) / R_OUT
-                ds = rf * np.sin(t)
-                ring.append(surface(P, Rm, sg, r["s"] + ds, thj + dth,
-                                    R_OUT + 0.02e-3))
-            caps.append(ring)
+    for i in range(len(rows) - 1):
+        r = rows[i]
+        a_mm, b_mm = r["a"], r["b"]
+        rho = (R_FIL_A if r["seg"] == 0 else R_FIL_B)
+        # 该行的菱形：中心在 (s+a, θ_c)，四角 = 上下尖角 + 左右侧角
+        for jc in range(6):
+            th_c = jc * np.pi / 3
+            corners = [
+                # (角相对中心 (dθ, ds), 两条邻边方向)
+                ((0.0, +a_mm), ((-b_mm, -a_mm), (+b_mm, -a_mm)), "tip"),
+                ((0.0, -a_mm), ((-b_mm, +a_mm), (+b_mm, +a_mm)), "tip"),
+                ((+b_mm, 0.0), ((-b_mm, -a_mm), (-b_mm, +a_mm)), "side"),
+                ((-b_mm, 0.0), ((+b_mm, -a_mm), (+b_mm, +a_mm)), "side"),
+            ]
+            for (dc, ds), (e1, e2), kind in corners:
+                if r["seg"] == 0 and kind != "tip":
+                    continue                  # 段1：只填轴向尖角
+                w = wedge(e1, e2, rho)
+                if w is None:
+                    continue
+                sv0 = r["s"] + a_mm * 1e-3 + ds * 1e-3
+                th0 = th_c + dc / (R_OUT * 1e3)
+                ring = [surface(P, Rm, sg, sv0 + q[1] * 1e-3,
+                                th0 + q[0] / (R_OUT * 1e3), R_OUT + 0.02e-3)
+                        for q in w]
+                caps.append(ring)
     if caps:
         cpc = Poly3DCollection(caps, facecolor="#8E4446", edgecolor="#4A2425",
-                               linewidth=0.15, alpha=1.0)
+                               linewidth=0.12, alpha=1.0)
         ax.add_collection3d(cpc)
 
     span = rows[-1]["s"]
