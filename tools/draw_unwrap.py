@@ -113,7 +113,9 @@ def panel(ax, alpha, fillets, title):
             cx, cy = m * B, n * a
             is_tip = (n % 2 == 0)          # 轴向尖角节点
             filleted = fillets[1] if is_tip else fillets[0]
-            r = (W_STRUT / 2 + RHO) if filleted else (W_STRUT * 0.72)
+            # 节点块：先填满 4 条筋的交汇缺口（半宽 w/2 的对角 = w/2·√2），
+            # 倒圆的节点再按 R 放大 ⇒ 网络连续、无"筋缺失"
+            r = W_STRUT * 0.7071 + (RHO if filleted else 0.0)
             ax.add_patch(plt.Circle((cx, cy), r, facecolor=RED,
                                     edgecolor="none", zorder=3))
     ax.set_xlim(0, CIRC)
@@ -124,7 +126,10 @@ def panel(ax, alpha, fillets, title):
     ax.tick_params(labelsize=7)
     ax.set_xlabel("周向展开 (mm)  3 个菱形/圈", fontsize=8)
     ax.set_ylabel("轴向 (mm)", fontsize=8)
-    mat = L * W_STRUT / (B * a)
+    # 材料率 = 筋条(2Lw) + 节点块 减去重叠，除以每孔占地 4Ba
+    node_r = W_STRUT * 0.7071
+    n_nodes = 2.0                       # 每孔占地 4Ba 内有 2 个节点
+    mat = (2 * L * W_STRUT + 0.6 * n_nodes * np.pi * node_r ** 2) / (4 * B * a)
     ax.set_title(f"{title}\nα={alpha}°  a={a:.2f}  节距={pa:.2f}  "
                  f"w={W_STRUT}  R={RHO}\n材料 {mat*100:.0f}% / 开孔 {(1-mat)*100:.0f}%",
                  fontsize=9, color=RED)
