@@ -187,24 +187,31 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
             ha="center", zorder=7)
 
     # ── 圆角：孔的两条边线的**切线圆弧**（凹圆角），填角上的楔形
-    def wedge(u1, u2, rho):
+    def wedge(u1, u2, rho, h=W_STRUT * 1e3 / 2.0):
+        """孔的切线圆角楔形。
+
+        ⚠ 关键：孔的**边界是筋的侧面**，不是筋的中心线。两侧各内缩 h=w/2，
+           两条内缩边线的交点沿角平分线移动  h/sin(φ/2)。
+           之前漏了这一步 ⇒ 圆角被画进孔中间。
+        """
         u1 = np.asarray(u1, float); u2 = np.asarray(u2, float)
         u1 /= np.linalg.norm(u1); u2 /= np.linalg.norm(u2)
         phi = float(np.arccos(np.clip(u1 @ u2, -1, 1)))
         if phi < 1e-4 or phi > np.pi - 1e-4:
             return None
-        t = rho / np.tan(phi / 2)
-        d = rho / np.sin(phi / 2)
-        P1, P2 = u1 * t, u2 * t
         bis = u1 + u2
         bis /= np.linalg.norm(bis)
-        O = bis * d
+        V = bis * (h / np.sin(phi / 2))          # 真实孔角（内缩后的交点）
+        t = rho / np.tan(phi / 2)
+        d = rho / np.sin(phi / 2)
+        P1, P2 = V + u1 * t, V + u2 * t
+        O = V + bis * d
         a1 = np.arctan2((P1 - O)[1], (P1 - O)[0])
         a2 = np.arctan2((P2 - O)[1], (P2 - O)[0])
         da = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
         arc = [O + rho * np.array([np.cos(a1 + da * q), np.sin(a1 + da * q)])
                for q in np.linspace(0, 1, 7)]
-        return [np.array([0.0, 0.0])] + [P1] + arc + [P2]
+        return [V] + [P1] + arc + [P2]
 
     caps = []
     for i in range(len(rows) - 1):
