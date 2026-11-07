@@ -197,8 +197,8 @@ def main():
                f"① 段1（靠基座）：只倒轴向尖角 R={RHO_A}", rho=RHO_A,
                only_axial=True)
     f2 = panel(axes[1], 20.0, [True, True, True, True],
-               f"② 段2：α=20°，四角全倒（轴向 R=2.0 / 侧向 R={RHO_B}）",
-               rho=RHO_B, rho_axial=2.0, only_axial=False)
+               f"② 段2：α=20°，四角全倒（轴向 R=5.0 / 侧向 R={RHO_B}）",
+               rho=RHO_B, rho_axial=5.0, only_axial=False)
     fig.suptitle(f"臂体平面展开图：红=材料（筋宽 {W_STRUT} mm；节点圆角为与两条内边线相切的圆弧：段1 R={RHO_A}（仅尖角）/ 段2 R={RHO_B}（四角））"
                  f"段1 R={RHO_A} mm（仅尖角）/ 段2 R={RHO_B} mm（四角）", fontsize=10)
     fig.tight_layout()
