@@ -47,14 +47,21 @@ def main():
     ap.add_argument("--ckpt", default=None,
                     help="断点文件路径（不给则自动 <表名>.ckpt）; 中断后重跑同一命令即续建")
     ap.add_argument("--no-ckpt", action="store_true", help="禁用断点")
+    ap.add_argument("--mu", type=float, default=0.0,
+                    help="腱-鞘摩擦系数 (Capstan); 0=关闭. 实测段间曲率比 4–8 对应 ~0.03–0.08")
+    ap.add_argument("--mu-branch", type=float, default=1.0,
+                    help="摩擦分支选择 (1.0=加载支)")
     a = ap.parse_args()
 
     ca, cb, P = build_arm(**({"EI": _C["EI"], "EA": _C["EA"]} if _C else {}))
+    if a.mu > 0.0:                       # 带摩擦时把续步步长也收紧
+        P.mu_friction = float(a.mu)
+        P.friction_branch = float(a.mu_branch)
     print(f"实机臂: EI={P.EI:.4g} N·m²  EA(k_rod)={P.k_rod:.4g} N  "
           f"L={P.L_total*1e3:.0f}mm  r_disk={P.r_disk*1e3:.0f}mm  "
           f"α={ca.alpha_deg:.3f}°  N_long={ca.N_long:.0f}", flush=True)
     print(f"        EI0 段A/段B = {ca.EI0:.5f} / {cb.EI0:.5f}  "
-          f"locked={ca.locked}", flush=True)
+          f"locked={ca.locked}  mu={P.mu_friction:.3f}", flush=True)
 
     for t in a.tau:
         t0 = time.time()
@@ -69,7 +76,8 @@ def main():
               f"({dt*60/max(len(recs),1):.1f} s/点)", flush=True)
         if a.no_save:
             continue
-        path = f"vc_table_real_{t:g}.npz"
+        _tag = f"_mu{P.mu_friction:g}" if P.mu_friction > 0 else ""
+        path = f"vc_table_real_{t:g}{_tag}.npz"
         save_table(path, recs, params=P)
         print(f"  已存 {path}  {os.path.getsize(path)/1e6:.1f} MB", flush=True)
         _ck = a.ckpt or f"vc_table_real_{t:g}.ckpt"
