@@ -35,7 +35,8 @@ B = CIRC / 6.0
 H_OFF = M.W_STRUT * 1e3 / 2.0
 L_SEG = 200.0
 L_TOT = 400.0
-DS = 0.8            # 网格步长 mm
+DS = 0.4            # 网格步长 mm（0.8 时孔边台阶明显，加密到 0.4）
+JOINT_HALF = 6.0    # 段界两侧各 6 mm 不留孔 => 实心厚壁圆筒衔接
 
 
 # anim_bend3d 用的是分散常数，这里汇总成两段参数字典
@@ -111,7 +112,14 @@ def build_mask():
                         if p[:, 1].max() < seg_lo - 2 or p[:, 1].min() > seg_hi + 2:
                             continue
                         inside |= Path(p).contains_points(centers)
-    return (nx, ny, ~inside.reshape(ny, nx))
+    mat = ~inside.reshape(ny, nx)
+    # 段界处做成实心厚壁圆筒（不留孔），把两段连起来
+    ys_mm = (np.arange(ny) + 0.5) * DS
+    band = np.abs(ys_mm - L_SEG) <= JOINT_HALF
+    mat[band, :] = True
+    print(f"段界实心带: s ∈ [{L_SEG-JOINT_HALF:.0f}, {L_SEG+JOINT_HALF:.0f}] mm "
+          f"({band.sum()} 行)")
+    return (nx, ny, mat)
 
 
 def render(ax, theta_total, nx, ny, mat, title):
@@ -149,7 +157,7 @@ def render(ax, theta_total, nx, ny, mat, title):
     for quads, col in ((q_out, RED), (q_in, "#7A3234"), (walls, "#8E4446")):
         if quads:
             pc = Poly3DCollection(quads, facecolor=col, edgecolor="none",
-                                  linewidth=0, alpha=1.0)
+                                  linewidth=0, alpha=1.0, antialiased=True)
             ax.add_collection3d(pc)
     pmin, pmax = P.min(0), P.max(0)
     ctr = 0.5 * (pmin + pmax)
@@ -167,14 +175,13 @@ def render(ax, theta_total, nx, ny, mat, title):
 def main():
     nx, ny, mat = build_mask()
     print(f"网格 {nx}x{ny}，材料 {mat.mean()*100:.1f}%，材料格 {mat.sum()}")
-    fig = plt.figure(figsize=(13, 6.2))
-    for k, th in enumerate((0.0, np.pi)):
-        ax = fig.add_subplot(1, 2, k + 1, projection="3d")
-        render(ax, th, nx, ny, mat, "直臂 0°" if k == 0 else "180° 弯曲")
+    fig = plt.figure(figsize=(9.0, 8.4))
+    ax = fig.add_subplot(111, projection="3d")
+    render(ax, np.pi, nx, ny, mat, "180° 弯曲")
     fig.suptitle("掩膜法渲染整根 400 mm 臂体（外表面 + 带圆角孔；"
                  "段1 α=34° 轴向R=5，段2 α=20° 轴向R=5/侧向R=1）", fontsize=10)
     fig.tight_layout()
-    fig.savefig("fig_arm_mesh.png", dpi=160, bbox_inches="tight")
+    fig.savefig("fig_arm_mesh.png", dpi=200, bbox_inches="tight")
     print("saved fig_arm_mesh.png")
 
 
