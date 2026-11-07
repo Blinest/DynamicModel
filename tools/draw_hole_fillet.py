@@ -61,37 +61,74 @@ def rounded_hole(alpha_deg, fillet_corners, rho=RHO, n=10):
     return np.array(pts), a, b
 
 
-def panel(ax, alpha, fillets, title):
-    pts, a, b = rounded_hole(alpha, fillets)
-    # 材料：外框 - 孔
+def panel(ax, alpha, fillets, title, rho=RHO):
+    pts, a, b = rounded_hole(alpha, fillets, rho)
     ax.add_patch(Polygon(pts, closed=True, facecolor=BLUE, alpha=0.55,
                          edgecolor="none", zorder=2))
     ax.plot(np.append(pts[:, 0], pts[0, 0]), np.append(pts[:, 1], pts[0, 1]),
             color=RED, lw=2.0, zorder=3)
-    # 未倒圆的参考菱形（虚线）
     ref = np.array([[b, 0], [0, a], [-b, 0], [0, -a], [b, 0]])
     ax.plot(ref[:, 0], ref[:, 1], ls="--", color="0.55", lw=1.0, zorder=4)
+    # 四角标注：说明该角是否倒圆
+    names = [("右侧角", b, 0), ("上尖角", 0, a), ("左侧角", -b, 0), ("下尖角", 0, -a)]
+    for k, (nm, x, y) in enumerate(names):
+        done = fillets[k]
+        ax.plot([x], [y], "o", ms=7, zorder=6,
+                mfc=GREEN if done else "white", mec=GREEN if done else RED, mew=1.4)
+        ax.annotate(f"{nm}\n{'已倒圆' if done else '保持尖角'}",
+                    xy=(x, y), xytext=(x * 1.12, y * 1.35 if y else (18 if x > 0 else -18)),
+                    fontsize=7, ha="center",
+                    color=GREEN if done else RED,
+                    arrowprops=dict(arrowstyle="-", color="0.55", lw=0.7))
     ax.plot(0, 0, "+", color="0.3", ms=8, zorder=5)
     ax.set_aspect("equal")
     ax.grid(alpha=0.15, ls=":")
-    ax.set_xlim(-b * 1.15, b * 1.15)
-    ax.set_ylim(-a * 1.35, a * 1.35)
-    ax.set_title(f"{title}\nα={alpha}°  a={a:.2f}  b={b:.2f}  R={RHO}",
+    ax.set_xlim(-b * 1.45, b * 1.45)
+    ax.set_ylim(-a * 2.0, a * 2.0)
+    ax.set_title(f"{title}\nα={alpha}°  a={a:.2f}  b={b:.2f}  R={rho}",
                  fontsize=9, color=RED)
     ax.set_xlabel("周向 (mm)", fontsize=7)
     ax.set_ylabel("轴向 (mm)", fontsize=7)
 
 
+def patch(ax, alpha, fillets, title, rho=RHO, n_c=3, n_r=4):
+    """展开的小阵列：画出每行菱形，倒圆的角用实心绿点标出，便于核对。"""
+    a, b, L = geom(alpha)
+    a_eff = a - H_OFF / np.sin(np.radians(alpha)) * 0  # 仅示意，用中心线菱形
+    for i in range(n_r + 1):
+        cy = i * 2 * a
+        for j in range(n_c + 1):
+            cx = (j + 0.5) * 2 * b
+            dia = np.array([[cx - b, cy], [cx, cy + a], [cx + b, cy], [cx, cy - a]])
+            ax.add_patch(Polygon(dia, closed=True, facecolor=BLUE, alpha=0.30,
+                                 edgecolor=RED, lw=1.0))
+            if i >= n_r:
+                continue
+            for k, (dx, dy) in enumerate([(b, 0), (0, a), (-b, 0), (0, -a)]):
+                if fillets[k]:
+                    ax.plot(cx + dx, cy + dy, "o", ms=3.2, color=GREEN)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title(title, fontsize=8.5, color=GREEN)
+
+
 def main():
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6))
+    fig = plt.figure(figsize=(15, 7.6))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1.35, 1], hspace=0.28, wspace=0.16)
+    a1 = fig.add_subplot(gs[0, 0])
+    a2 = fig.add_subplot(gs[0, 1])
+    b1 = fig.add_subplot(gs[1, 0])
+    b2 = fig.add_subplot(gs[1, 1])
     # 角顺序: 右(侧) / 上(尖) / 左(侧) / 下(尖)
-    panel(axes[0], 34.0, [False, True, False, True],
-          "① 段1：只倒轴向尖角（上下圆、左右尖）")
-    panel(axes[1], 28.0, [True, True, True, True],
-          "② 段2：四角全倒（圆润菱形）")
-    fig.suptitle(f"菱形孔圆角放大对比（切线圆弧 R={RHO} mm，孔边已从筋中心线内缩 {H_OFF} mm）",
+    F1 = [False, True, False, True]
+    F2 = [True, True, True, True]
+    panel(a1, 34.0, F1, "① 段1 单孔（只倒上/下尖角）")
+    panel(a2, 28.0, F2, "② 段2 单孔（四角全倒）")
+    patch(b1, 34.0, F1, "③ 段1 展开阵列：绿点=已倒圆的角（只有上下尖角）")
+    patch(b2, 28.0, F2, "④ 段2 展开阵列：绿点=已倒圆的角（四个角都有）")
+    fig.suptitle(f"菱形孔圆角（切线圆弧 R={RHO} mm，孔边从筋中心线内缩 {H_OFF} mm）",
                  fontsize=10)
-    fig.tight_layout()
+    pass  # gridspec 已给 hspace/wspace, 不用 tight_layout
     fig.savefig("fig_hole_fillet.png", dpi=170, bbox_inches="tight")
     print("saved fig_hole_fillet.png")
     for al, tag in ((34.0, "段1"), (28.0, "段2")):
