@@ -260,8 +260,8 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                           for k, c in enumerate(cols)])
         ax.add_collection3d(pc)
     if caps:
-        cpc = Poly3DCollection(caps, facecolor="#8E4446", edgecolor="#4A2425",
-                               linewidth=0.12, alpha=1.0)
+        cpc = Poly3DCollection(caps, facecolor=RED, edgecolor="none",
+                               linewidth=0, alpha=1.0)   # 与筋同色无边 => 融为一体
         ax.add_collection3d(cpc)
 
     span = rows[-1]["s"]

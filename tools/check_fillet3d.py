@@ -93,8 +93,8 @@ def render(ax, theta_total, title):
     pc.set_facecolor(cols)
     ax.add_collection3d(pc)
     if caps:
-        cpc = Poly3DCollection(caps, facecolor="#FF2D2D", edgecolor="none",
-                               alpha=1.0)
+        cpc = Poly3DCollection(caps, facecolor=RED, edgecolor="none",
+                               alpha=1.0)   # 圆角也是筋, 同色
         ax.add_collection3d(cpc)
     ax.set_xlim(-0.012, 0.012); ax.set_ylim(-0.012, 0.012)
     ax.set_zlim(-0.002, N_ROW * a * 1e-3 + 0.002)
