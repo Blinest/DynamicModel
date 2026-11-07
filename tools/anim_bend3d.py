@@ -186,18 +186,26 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     ax.text(0, 0, zb0 - 0.004, "固定基座", fontsize=7, color="0.25",
             ha="center", zorder=7)
 
-    # ── 节点圆角标记（段1 只标轴向尖角，段2 全标）────────────────
+    # ── 圆角：在节点处铺一圈实体圆面，把孔的尖角填圆（可直接看出孔形变化）
+    caps = []
     for i, r in enumerate(rows):
         axial_tip = (i % 2 == 0)
         if r["seg"] == 0 and not axial_tip:
-            continue
-        rf = R_FIL_A if r["seg"] == 0 else R_FIL_B
+            continue                      # 段1：只填轴向尖角
+        rf = (R_FIL_A if r["seg"] == 0 else R_FIL_B) * 1e-3
         for j in range(6):
             thj = j * np.pi / 3
-            pj = surface(P, Rm, sg, r["s"], thj, R_OUT)
-            ax.plot([pj[0]], [pj[1]], [pj[2]], "o", color="white",
-                    markeredgecolor="#6E3234", markeredgewidth=0.4,
-                    ms=max(1.2, rf * 1.6))
+            ring = []
+            for t in np.linspace(0, 2 * np.pi, 14, endpoint=False):
+                dth = rf * np.cos(t) / R_OUT
+                ds = rf * np.sin(t)
+                ring.append(surface(P, Rm, sg, r["s"] + ds, thj + dth,
+                                    R_OUT + 0.02e-3))
+            caps.append(ring)
+    if caps:
+        cpc = Poly3DCollection(caps, facecolor="#8E4446", edgecolor="#4A2425",
+                               linewidth=0.15, alpha=1.0)
+        ax.add_collection3d(cpc)
 
     span = rows[-1]["s"]
     # 坐标范围：所有帧共用同一套（否则相机跟着包围盒走 ⇒ 看起来整体平移）
