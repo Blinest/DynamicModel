@@ -111,8 +111,10 @@ def strut(P, Rm, sg, thA, sA, thB, sB, n=8):
         d /= max(np.linalg.norm(d), 1e-12)
         perp = np.cross(d, p_out - p_in)
         perp /= max(np.linalg.norm(perp), 1e-12)
-        o = perp * (W_STRUT / 2)
-        cor.append([p_out + o, p_out - o, p_in - o, p_in + o])
+        # 筋宽度按**角度**一致（径向切割）：内表面物理宽度只有外表面的 R_IN/R_OUT
+        o_out = perp * (W_STRUT / 2)
+        o_in = perp * (W_STRUT / 2) * (R_IN / R_OUT)
+        cor.append([p_out + o_out, p_out - o_out, p_in - o_in, p_in + o_in])
     cor = np.asarray(cor)
     quads = []
     for i in range(n - 1):
@@ -234,10 +236,11 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                 #   若圆角用 q/R_OUT，则在 R_IN 处物理宽度只有 81% ⇒ 内外都不相切。
                 rr_o = R_OUT + 0.06e-3
                 rr_i = R_IN - 0.02e-3
+                # Δθ 用 R_OUT 换算 ⇒ 内外同一角度 ⇒ 天然锥形，与径向切割一致
                 ring_o = [surface(P, Rm, sg, sv0 + q[1] * 1e-3,
-                                  th0 + q[0] / (rr_o * 1e3), rr_o) for q in w]
+                                  th0 + q[0] / (R_OUT * 1e3), rr_o) for q in w]
                 ring_i = [surface(P, Rm, sg, sv0 + q[1] * 1e-3,
-                                  th0 + q[0] / (rr_i * 1e3), rr_i) for q in w]
+                                  th0 + q[0] / (R_OUT * 1e3), rr_i) for q in w]
                 caps.append(ring_o)                 # 外表面
                 caps.append(ring_i[::-1])           # 内表面（反向绕序）
                 # 侧壁：把内外环逐边连起来 => 闭合实体（否则像零厚度片）

@@ -81,9 +81,9 @@ def render(ax, theta_total, title):
                 ro_r = M.R_OUT + 0.05e-3
                 ri_r = M.R_IN - 0.01e-3
                 ro = [M.surface(P, Rm, sg, cy + p[1] * 1e-3,
-                                th_c + p[0] / (ro_r * 1e3), ro_r) for p in poly]
+                                th_c + p[0] / (M.R_OUT * 1e3), ro_r) for p in poly]
                 ri = [M.surface(P, Rm, sg, cy + p[1] * 1e-3,
-                                th_c + p[0] / (ri_r * 1e3), ri_r) for p in poly]
+                                th_c + p[0] / (M.R_OUT * 1e3), ri_r) for p in poly]
                 caps.append(ro)
                 caps.append(ri[::-1])
                 for kk in range(len(ro)):
