@@ -149,7 +149,7 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     for k in range(6):
         thk = k * np.pi / 3
         pts = np.array([surface(P, Rm, sg, sv, thk, R_DISK) for sv in svals])
-        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=GREEN, lw=1.6, alpha=0.95,
+        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=GREEN, lw=0.8, alpha=0.85,
                 zorder=6, solid_capstyle="round")
 
     # 固定基座：s=0 处一块方形夹持板（向下 10 mm），并用剖面线示意"固定"
