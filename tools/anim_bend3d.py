@@ -132,7 +132,8 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                 cols += [RED if dj > 0 else "#6E3234"] * len(q)   # 两组方向用明暗区分
     if not quads:
         return
-    pc = Poly3DCollection(quads, edgecolor="none", linewidth=0, alpha=0.97)
+    pc = Poly3DCollection(quads, edgecolor="#4A2425", linewidth=0.22,
+                          alpha=1.0)
     pc.set_facecolor([tuple(np.array(matplotlib.colors.to_rgb(c))
                             * (1.0 if (k // 4) % 2 else 0.72))
                       for k, c in enumerate(cols)])
@@ -205,12 +206,12 @@ def main():
         k1 = theta_total / 0.3
         A = k1 * EI / (3 * R_DISK)
         ss, kfun = kappa_profile(theta_total)
-        fig = plt.figure(figsize=(5.6, 6.2))
+        fig = plt.figure(figsize=(6.6, 7.0))
         ax = fig.add_subplot(111, projection="3d")
         draw(ax, kfun, ss, A, theta_total, LIMS)
         fig.tight_layout()
         fn = f"/tmp/_b3d_{idx:03d}.png"
-        fig.savefig(fn, dpi=95)
+        fig.savefig(fn, dpi=150)
         plt.close(fig)
         files.append(fn)
         TH.append(np.degrees(theta_total))
@@ -220,6 +221,18 @@ def main():
     ims[0].save("anim_bend3d.gif", save_all=True, append_images=ims[1:],
                 duration=180, loop=0, optimize=True)
     print(f"saved anim_bend3d.gif ({len(ims)} 帧)")
+
+    # 末帧（180°）高分辨率 PNG：GIF 只有 256 色，细描边会被量化掉
+    k1 = np.pi / 0.3
+    A = k1 * EI / (3 * R_DISK)
+    ss, kfun = kappa_profile(np.pi)
+    fig = plt.figure(figsize=(8.0, 8.4))
+    ax = fig.add_subplot(111, projection="3d")
+    draw(ax, kfun, ss, A, np.pi, LIMS)
+    fig.tight_layout()
+    fig.savefig("anim_bend3d_final.png", dpi=220)
+    plt.close(fig)
+    print("saved anim_bend3d_final.png (180°, dpi 220)")
 
 
 if __name__ == "__main__":
