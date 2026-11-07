@@ -245,8 +245,12 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                 ring_i = [surface(P, Rm, sg, sv0 + q[1] * 1e-3,
                                   th0 + q[0] / (R_OUT * 1e3), R_IN - 0.02e-3)
                           for q in w]
-                caps.append(ring_o)
-                caps.append(ring_i[::-1])
+                caps.append(ring_o)                 # 外表面
+                caps.append(ring_i[::-1])           # 内表面（反向绕序）
+                # 侧壁：把内外环逐边连起来 => 闭合实体（否则像零厚度片）
+                for kk in range(len(ring_o)):
+                    k2 = (kk + 1) % len(ring_o)
+                    caps.append([ring_o[kk], ring_o[k2], ring_i[k2], ring_i[kk]])
     if caps:
         cpc = Poly3DCollection(caps, facecolor="#8E4446", edgecolor="#4A2425",
                                linewidth=0.12, alpha=1.0)

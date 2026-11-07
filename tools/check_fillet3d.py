@@ -77,12 +77,18 @@ def render(ax, theta_total, title):
                 da = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
                 arc = [O + rho * np.array([np.cos(a1 + da * q), np.sin(a1 + da * q)])
                        for q in np.linspace(0, 1, 12)]
-                for rr, off in ((M.R_OUT + 0.05e-3, M.R_OUT), (M.R_IN - 0.01e-3, M.R_IN)):
-                    pts = [M.surface(P, Rm, sg, cy + ds * 1e-3 + p[1] * 1e-3
-                                     if False else cy + p[1] * 1e-3,
-                                     th_c + p[0] / (M.R_OUT * 1e3), rr)
-                           for p in [V] + [P1] + arc + [P2]]
-                    caps.append(pts)
+                poly = [V] + [P1] + arc + [P2]
+                ro = [M.surface(P, Rm, sg, cy + p[1] * 1e-3,
+                                th_c + p[0] / (M.R_OUT * 1e3), M.R_OUT + 0.05e-3)
+                      for p in poly]
+                ri = [M.surface(P, Rm, sg, cy + p[1] * 1e-3,
+                                th_c + p[0] / (M.R_OUT * 1e3), M.R_IN - 0.01e-3)
+                      for p in poly]
+                caps.append(ro)
+                caps.append(ri[::-1])
+                for kk in range(len(ro)):
+                    k2 = (kk + 1) % len(ro)
+                    caps.append([ro[kk], ro[k2], ri[k2], ri[kk]])
     pc = Poly3DCollection(quads, edgecolor="none", linewidth=0, alpha=1.0)
     pc.set_facecolor(cols)
     ax.add_collection3d(pc)
