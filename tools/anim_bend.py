@@ -54,6 +54,57 @@ def shape(k1, n=NSUB):
     return np.array(Ps) * 1e3, np.array(Rs)
 
 
+# ── 菱形格（公共节点版，画图坐标 mm）──────────────────────────────
+PA_MM = (L1 + L2) / 48.0 * 1e3        # 轴向节距 8.33 mm
+PITCH_C_MM = 2 * np.pi * (R_O * 1e3) / 3.0
+A0 = PA_MM / 2.0                      # 轴向半对角 4.17（节点轴向间距）
+B0 = PITCH_C_MM / 2.0                 # 周向半对角 8.38（节点周向间距）
+L_STRUT = np.hypot(A0, B0)            # 筋长 9.36 mm，恒定
+R_FIL = 1.2
+N_I, N_J = 7, 4                       # 节点网格 7×4 ⇒ 5 行 × 3 列菱形
+
+
+def ab(eps, exag=1.0):
+    a = A0 * (1.0 + eps * exag)
+    a = float(np.clip(a, 0.08 * A0, 0.985 * L_STRUT))
+    b = float(np.sqrt(max(L_STRUT ** 2 - a ** 2, 0.0)))
+    return a, b
+
+
+def kappa_at(s_m, k1):
+    return k1 if s_m <= L1 else k1 / 2.0
+
+
+def draw_lattice(ax, eps, title, exag=1.0):
+    """公共节点菱形格：节点 N(i,j)=(j·b, i·a)，筋连对角节点。"""
+    ax.clear()
+    a, b = ab(eps, exag)
+    for i in range(N_I - 2):
+        for j in range(1, N_J - 1):
+            v = [(j * b, i * a), ((j + 1) * b, (i + 1) * a),
+                 (j * b, (i + 2) * a), ((j - 1) * b, (i + 1) * a)]
+            ax.add_patch(plt.Polygon(v, closed=True, facecolor=BLUE, alpha=0.40,
+                                     edgecolor="none", zorder=1))
+    for i in range(N_I - 1):
+        for j in range(N_J):
+            for dj in (+1, -1):
+                j2 = j + dj
+                if 0 <= j2 < N_J:
+                    ax.plot([j * b, j2 * b], [i * a, (i + 1) * a],
+                            color=RED, lw=1.6, solid_capstyle="round", zorder=2)
+    for i in range(N_I):
+        for j in range(N_J):
+            ax.add_patch(plt.Circle((j * b, i * a), R_FIL, facecolor=GREEN,
+                                    alpha=0.95, edgecolor="white", lw=0.4, zorder=3))
+    area = 2 * a * b / (2 * A0 * B0) * 100
+    ax.set_xlim(-b, (N_J - 1) * b + b)
+    ax.set_ylim(-a, (N_I - 1) * a + a)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title(f"{title}\nε={eps*100:+.1f}%  a={a:.2f} b={b:.2f}  孔面积 {area:.0f}%",
+                 fontsize=8, color=RED if eps > 0 else (GREEN if eps < 0 else "0.3"))
+
+
 def draw(ax, k1, A):
     P, R = shape(k1)
     nvec = R[:, :, 0][:, :2]                 # 面内法向 (x,z)
@@ -90,11 +141,17 @@ def main():
     files, As, TH = [], [], []
     for i, A in enumerate(np.linspace(0.0, AMAX, NFRAME)):
         k1 = 3 * A * R_DISK / EI
-        fig, ax = plt.subplots(figsize=(5.4, 6.0))
+        fig, (ax, ax1, ax2) = plt.subplots(
+            1, 3, figsize=(15, 5.4),
+            gridspec_kw=dict(width_ratios=[1.5, 1, 1]))
         th = draw(ax, k1, A)
+        eps_in = kappa_at(L1 / 2, k1) * (-R_O)
+        eps_out = kappa_at(L1 / 2, k1) * (+R_O)
+        draw_lattice(ax1, eps_in, "内侧壁（受压）", exag=3.0)
+        draw_lattice(ax2, eps_out, "外侧壁（受拉）", exag=3.0)
         fig.tight_layout()
         fn = f"/tmp/_bend_{i:03d}.png"
-        fig.savefig(fn, dpi=105)
+        fig.savefig(fn, dpi=100)
         plt.close(fig)
         files.append(fn)
         As.append(A)
