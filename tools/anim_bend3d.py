@@ -32,7 +32,7 @@ R_OUT, R_IN = 8e-3, 6.5e-3      # m（内部一律米制，避免与 P 混单位
 W_STRUT = 1.5e-3
 L1 = L2 = 0.2
 L_TOT = L1 + L2
-MU, NFRAME, AMAX = 0.15, 21, 7.0
+MU, NFRAME = 0.15, 25
 N_ROW = 8
 B_MM = np.pi * R_OUT * 1e3 / 3.0
 A_MM = 4.167
@@ -163,9 +163,10 @@ def draw(ax, kfun, ss, A, theta_total):
 
 def main():
     files, TH = [], []
-    for idx, A in enumerate(np.linspace(0.0, AMAX, NFRAME)):
-        k1 = 3 * A * R_DISK / EI
-        theta_total = 0.3 * k1
+    # 按目标角度驱动（末帧正好 180°）：θ = 0.9·A·r/EI
+    for idx, theta_total in enumerate(np.linspace(0.0, np.pi, NFRAME)):
+        k1 = theta_total / 0.3
+        A = k1 * EI / (3 * R_DISK)
         ss, kfun = kappa_profile(theta_total)
         fig = plt.figure(figsize=(5.6, 6.2))
         ax = fig.add_subplot(111, projection="3d")

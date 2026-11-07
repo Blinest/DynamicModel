@@ -33,7 +33,6 @@ L1 = L2 = 0.2
 L_TOT = L1 + L2
 NSUB = 60
 NFRAME = 25
-AMAX = 7.0
 MU = 0.15
 
 PA_MM = L_TOT / 48.0 * 1e3             # 8.333 mm
@@ -195,9 +194,10 @@ def draw_unrolled(ax, kfun, ss, sign, title):
 def main():
     files, As, TH = [], [], []
     stations = [0.03, 0.13, 0.24, 0.35]
-    for idx, A in enumerate(np.linspace(0.0, AMAX, NFRAME)):
-        k1 = 3 * A * R_DISK / EI
-        theta_total = 0.3 * k1
+    # 按目标角度驱动（末帧正好 180°）：θ = 0.9·A·r/EI
+    for idx, theta_total in enumerate(np.linspace(0.0, np.pi, NFRAME)):
+        k1 = theta_total / 0.3
+        A = k1 * EI / (3 * R_DISK)
         ss, kfun = kappa_profile(theta_total)
         fig, (ax, ax1, ax2) = plt.subplots(
             1, 3, figsize=(16, 5.2), gridspec_kw=dict(width_ratios=[1.25, 1, 1]))
