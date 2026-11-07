@@ -53,7 +53,7 @@ def render(ax, theta_total, title):
     for i in range(N_ROW + 1):
         cy = svals[i]
         for j in range(6):
-            th_c = j * np.pi / 3
+            th_c = j * np.pi / 3 + np.pi / 6   # 菱形中心在节点之间
             for (dc, ds), (e1, e2), kind in (
                     ((0.0, +a), ((-Bm, -a), (+Bm, -a)), "tip"),
                     ((0.0, -a), ((-Bm, +a), (+Bm, +a)), "tip"),

@@ -220,7 +220,8 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
         a_mm, b_mm = r["a"], r["b"]
         # 该行的菱形：中心在 (s+a, θ_c)，四角 = 上下尖角 + 左右侧角
         for jc in range(6):
-            th_c = jc * np.pi / 3
+            # 菱形中心在相邻两列节点**之间**（节点在 jc·60°，中心在 +30°）
+            th_c = jc * np.pi / 3 + np.pi / 6
             corners = [
                 # (角相对中心 (dθ, ds), 两条邻边方向)
                 ((0.0, +a_mm), ((-b_mm, -a_mm), (+b_mm, -a_mm)), "tip"),
@@ -251,6 +252,13 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                 for kk in range(len(ring_o)):
                     k2 = (kk + 1) % len(ring_o)
                     caps.append([ring_o[kk], ring_o[k2], ring_i[k2], ring_i[kk]])
+    # 过滤非有限几何（否则 matplotlib 自动缩放会抛 "Axis limits cannot be NaN"）
+    n0 = (len(quads), len(caps))
+    quads = [q for q in quads if np.isfinite(np.asarray(q, float)).all()]
+    caps = [c for c in caps if np.isfinite(np.asarray(c, float)).all()]
+    if (len(quads), len(caps)) != n0:
+        print(f"    [warn] 丢弃非有限几何: quads {n0[0]}->{len(quads)}, "
+              f"caps {n0[1]}->{len(caps)}", flush=True)
     if caps:
         cpc = Poly3DCollection(caps, facecolor="#8E4446", edgecolor="#4A2425",
                                linewidth=0.12, alpha=1.0)
