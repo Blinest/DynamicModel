@@ -129,7 +129,7 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                 th1 = th0 + dj * dth
                 q = strut(P, Rm, sg, th0, r0["s"], th1, r1["s"])
                 quads += q
-                cols += [RED if dj > 0 else GREEN] * len(q)
+                cols += [RED if dj > 0 else "#6E3234"] * len(q)   # 两组方向用明暗区分
     if not quads:
         return
     pc = Poly3DCollection(quads, edgecolor="none", linewidth=0, alpha=0.97)
@@ -149,8 +149,8 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     for k in range(6):
         thk = k * np.pi / 3
         pts = np.array([surface(P, Rm, sg, sv, thk, R_DISK) for sv in svals])
-        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=RED, lw=1.0, alpha=0.9,
-                zorder=6)
+        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=GREEN, lw=1.6, alpha=0.95,
+                zorder=6, solid_capstyle="round")
 
     # 固定基座：s=0 处一块方形夹持板（向下 10 mm），并用剖面线示意"固定"
     b = R_OUT * 1.55
@@ -179,7 +179,7 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
     ax.set_title(f"A={A:.2f} N  θ={np.degrees(theta_total):.1f}°  "
-                 f"ε_root={rows[0]['eps']*100:+.1f}%  全长 {span*1e3:.0f} mm",
+                 f"ε_root={rows[0]['eps']*100:+.1f}%\n红=臂体菱形筋  绿=驱动丝  灰=基座",
                  fontsize=9)
 
 
