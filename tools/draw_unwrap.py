@@ -91,7 +91,8 @@ def panel(ax, alpha, fillets, title):
     pa = 2 * a
     ax.add_patch(Rectangle((0, 0), CIRC, WIN, facecolor="white",
                            edgecolor="0.85", lw=0.6, zorder=0))
-    n_rows = int(np.ceil(WIN / pa)) + 3
+    # ⚠ 节点是 n·a 递增（不是 n·pa），行范围必须按 a 覆盖整个窗口
+    n_rows = int(np.ceil(WIN / a)) + 4
     n_cols = int(np.ceil(CIRC / B)) + 4
     # 筋：节点 (m·B, n·a)（m−n 为偶）连到 (m+1, n±1)
     for n in range(-2, n_rows):
