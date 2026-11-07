@@ -95,12 +95,14 @@ def node_fillet_polys(cx, cy, a, rho=1.0, h=H_OFF, n=9):
     ang = [np.arctan2(d[1], d[0]) for d in dirs]
     order = np.argsort(ang)
     dirs = [dirs[k] / np.linalg.norm(dirs[k]) for k in order]
-    Vs, wedges = [], []
+    Vs, wedges, axial = [], [], []
     for k in range(4):
         u1, u2 = dirs[k], dirs[(k + 1) % 4]
         phi = float(np.arccos(np.clip(u1 @ u2, -1, 1)))
         bis = u1 + u2
         bis /= np.linalg.norm(bis)
+        # 角平分线偏轴向(|bis_y|>|bis_x|) ⇒ 该扇区是"轴向尖角"
+        axial.append(abs(bis[1]) > abs(bis[0]))
         V = np.array([cx, cy]) + bis * (h / np.sin(phi / 2))
         Vs.append(V)
         if rho > 0:
@@ -116,10 +118,12 @@ def node_fillet_polys(cx, cy, a, rho=1.0, h=H_OFF, n=9):
             wedges.append(np.array([V] + [P1] + arc + [P2]))
         else:
             wedges.append(None)
-    return np.array(Vs), wedges
+    return np.array(Vs), wedges, axial
 
 
-def panel(ax, alpha, fillets, title, rho=1.0):
+def panel(ax, alpha, fillets, title, rho=1.0, only_axial=False):
+    """only_axial=True 时只对轴向扇区倒圆（段1），False 时四个扇区都倒（段2）。"""
+    fillets_any = any(fillets)
     """白底（=孔），材料只画成 1.5 mm 细带 + 节点圆盘。
 
     ⚠ 之前"红底挖菱形孔"是错的：菱形只占平面一半，**菱形之间的空隙也是孔**，
@@ -151,17 +155,19 @@ def panel(ax, alpha, fillets, title, rho=1.0):
             if (m - n) % 2:
                 continue
             cx, cy = m * B, n * a
-            is_tip = (n % 2 == 0)          # 轴向尖角节点
-            filleted = fillets[1] if is_tip else fillets[0]
-            # 中心小块：把 4 条筋的交汇处填实（V 四边形的内接区域）
-            Vs, wedges = node_fillet_polys(cx, cy, a, rho=(rho if filleted else 0.0))
+            # 圆角按**扇区方向**选：段1 只倒轴向扇区(上下)，段2 四个扇区都倒
+            Vs, wedges, axial = node_fillet_polys(cx, cy, a,
+                                                  rho=rho if fillets_any else 0.0)
             ax.add_patch(Polygon(Vs, closed=True, facecolor=RED,
                                  edgecolor="none", zorder=3))
-            if filleted:
-                for wd in wedges:
-                    if wd is not None:
-                        ax.add_patch(Polygon(wd, closed=True, facecolor=RED,
-                                             edgecolor="none", zorder=3))
+            if fillets_any:
+                for wd, is_ax in zip(wedges, axial):
+                    if wd is None:
+                        continue
+                    if only_axial and not is_ax:
+                        continue
+                    ax.add_patch(Polygon(wd, closed=True, facecolor=RED,
+                                         edgecolor="none", zorder=3))
     ax.set_xlim(0, CIRC)
     ax.set_ylim(0, WIN)
     ax.set_aspect("equal")
@@ -183,9 +189,11 @@ def panel(ax, alpha, fillets, title, rho=1.0):
 def main():
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 6.2))
     f1 = panel(axes[0], 34.0, [False, True, False, True],
-               f"① 段1（靠基座）：只倒轴向尖角 R={RHO_A}", rho=RHO_A)
+               f"① 段1（靠基座）：只倒轴向尖角 R={RHO_A}", rho=RHO_A,
+               only_axial=True)
     f2 = panel(axes[1], 15.0, [True, True, True, True],
-               f"② 段2：α=15°，四角全倒 R={RHO_B}", rho=RHO_B)
+               f"② 段2：α=15°，四角全倒 R={RHO_B}", rho=RHO_B,
+               only_axial=False)
     fig.suptitle(f"臂体平面展开图：红=材料（筋宽 {W_STRUT} mm；节点圆角为与两条内边线相切的圆弧：段1 R={RHO_A}（仅尖角）/ 段2 R={RHO_B}（四角））"
                  f"段1 R={RHO_A} mm（仅尖角）/ 段2 R={RHO_B} mm（四角）", fontsize=10)
     fig.tight_layout()
