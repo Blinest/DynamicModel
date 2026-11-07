@@ -23,19 +23,19 @@ RED, BLUE, GREEN = "#A34D4E", "#516CA3", "#8DAE7F"
 
 R_O, N_CIRC, L_SEG = 8.0, 3, 200.0
 CIRC = 2 * np.pi * R_O
-YMAX = 22.0
+N_CELLS = 3            # 窗口内显示 3 行完整菱形
 
 
 def panel(ax, pa, hl=False):
+    """纵轴范围取 3*pa 的整数倍 ⇒ 窗口边界正好落在菱形顶点，每行都是完整菱形。"""
     m = N_CIRC * pa / CIRC                     # 斜率
     alpha = np.degrees(np.arctan(m))
     L = np.hypot(CIRC / N_CIRC, pa)
     n_long = L_SEG / pa
-    ax.add_patch(Polygon([(0, -YMAX), (CIRC, -YMAX), (CIRC, YMAX), (0, YMAX)],
+    YMAX = N_CELLS * pa
+    ax.add_patch(Polygon([(0, 0), (CIRC, 0), (CIRC, YMAX), (0, YMAX)],
                          facecolor=BLUE, alpha=0.35, zorder=0))
-    k0 = int(-YMAX / pa) - 1
-    k1 = int(YMAX / pa) + 2
-    for k in range(k0, k1):
+    for k in range(-2, N_CELLS + 3):           # 多画两行，边界外的线仍能连上
         c = k * pa
         if hl:
             ax.plot([0, CIRC], [c, c + m * CIRC], color=RED, lw=2.0, zorder=3)
@@ -43,15 +43,20 @@ def panel(ax, pa, hl=False):
         else:
             ax.plot([0, CIRC], [c, c + m * CIRC], color=RED, lw=2.0, zorder=3)
             ax.plot([0, CIRC], [c + m * CIRC, c], color=RED, lw=2.0, zorder=3)
+    # 标出菱形顶点（相邻两族线的交点，位于 x=0 与 x=CIRC/3 处）
+    for k in range(N_CELLS + 1):
+        for j in range(N_CIRC + 1):
+            ax.plot(j * CIRC / N_CIRC, k * pa, "o", color=GREEN, ms=3.0,
+                    markeredgecolor="white", markeredgewidth=0.4, zorder=5)
     ax.set_xlim(0, CIRC)
-    ax.set_ylim(-YMAX, YMAX)
+    ax.set_ylim(0, YMAX)
     ax.set_aspect("equal")
     ax.grid(alpha=0.12, ls=":")
     ax.tick_params(labelsize=6)
-    ax.set_title(f"轴向节距 pa = {pa:g} mm  ⇒  α = {alpha:.2f}°\n"
+    ax.set_title(f"轴向节距 pa = {pa:.2f} mm  ⇒  α = {alpha:.2f}°\n"
                  f"L_strut = {L:.2f} mm   行数/段 = {n_long:.0f}"
-                 f"{'   （当前模型）' if pa == 1.47 else ''}",
-                 fontsize=8.5, color=RED if pa == 8.33 else GREEN)
+                 f"{'   ← 采用' if pa > 8 else ''}",
+                 fontsize=8.5, color=RED if pa > 8 else GREEN)
 
 
 def main():
