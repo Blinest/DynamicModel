@@ -144,12 +144,27 @@ def draw(ax, kfun, ss, A, theta_total):
         for rr in (R_OUT, R_IN):
             pts = np.array([surface(P, Rm, sg, sv, t, rr) for t in th])
             ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=BLUE, lw=0.7, alpha=alpha)
+    # 驱动丝：沿臂身弯曲（r = R_DISK 恒定，全程在臂体内部），不是直线
+    svals = np.linspace(0.0, rows[-1]["s"], 120)
     for k in range(6):
-        a = k * np.pi / 3
-        pA = surface(P, Rm, sg, rows[0]["s"], a, R_DISK)
-        pB = surface(P, Rm, sg, rows[-1]["s"], a, R_DISK)
-        ax.plot([pA[0], pB[0]], [pA[1], pB[1]], [pA[2], pB[2]],
-                color=RED, lw=0.9, alpha=0.85)
+        thk = k * np.pi / 3
+        pts = np.array([surface(P, Rm, sg, sv, thk, R_DISK) for sv in svals])
+        ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], color=RED, lw=1.0, alpha=0.9,
+                zorder=6)
+
+    # 固定基座：s=0 处一块方形夹持板（向下 10 mm），并用剖面线示意"固定"
+    b = R_OUT * 1.55
+    zb0, zb1 = -0.010, 0.0
+    bx = [(-b, -b), (b, -b), (b, b), (-b, b)]
+    top = [(x, y, zb1) for x, y in bx]
+    bot = [(x, y, zb0) for x, y in bx]
+    base_quads = [top[::-1], bot] + [[top[i], top[(i + 1) % 4],
+                                      bot[(i + 1) % 4], bot[i]] for i in range(4)]
+    bpc = Poly3DCollection(base_quads, facecolor="#8A8F98", edgecolor="0.35",
+                           linewidth=0.4, alpha=0.95)
+    ax.add_collection3d(bpc)
+    ax.text(0, 0, zb0 - 0.004, "固定基座", fontsize=7, color="0.25",
+            ha="center", zorder=7)
 
     span = rows[-1]["s"]
     # ⚠ 必须用米：四边形坐标是米制，用毫米写 xlim 会把所有几何甩出视野（画面空白）
