@@ -280,6 +280,68 @@ def compute_lims(theta=np.pi):
             (ctr[2] - half, ctr[2] + half))
 
 
+def panel_zoom(ax, alpha, rho_ax, rho_sd, title, n_cell=2):
+    """与三维同一几何的平面展开局部放大（用来核对圆角）。"""
+    ax.clear()
+    Bm = np.pi * R_OUT * 1e3 / 3.0
+    L = Bm / np.cos(np.radians(alpha))
+    a = L * np.sin(np.radians(alpha))
+    h = W_STRUT * 1e3 / 2.0
+    ax.add_patch(plt.Rectangle((0, 0), 2 * Bm, (n_cell + 1) * a,
+                               facecolor="white", edgecolor="0.85", lw=0.6))
+    # 筋
+    for n in range(-1, int((n_cell + 1) * a / a) + 3):
+        for m in range(-2, 6):
+            if (m - n) % 2:
+                continue
+            p0 = np.array([m * Bm, n * a])
+            for dm in (+1, -1):
+                p1 = np.array([(m + dm) * Bm, (n + 1) * a])
+                d = p1 - p0
+                d /= np.linalg.norm(d)
+                nv = np.array([-d[1], d[0]]) * h
+                ax.add_patch(plt.Polygon([p0 + nv, p1 + nv, p1 - nv, p0 - nv],
+                                         closed=True, facecolor=RED, edgecolor="none"))
+    # 节点圆角（与三维同一套公式）
+    for n in range(-1, int((n_cell + 1) * a / a) + 3):
+        for m in range(-2, 6):
+            if (m - n) % 2:
+                continue
+            dirs = [np.array([+Bm, +a]), np.array([-Bm, +a]),
+                    np.array([-Bm, -a]), np.array([+Bm, -a])]
+            o = np.argsort([np.arctan2(d[1], d[0]) for d in dirs])
+            dirs = [dirs[k] / np.linalg.norm(dirs[k]) for k in o]
+            Vs = []
+            for k in range(4):
+                u1, u2 = dirs[k], dirs[(k + 1) % 4]
+                phi = float(np.arccos(np.clip(u1 @ u2, -1, 1)))
+                bis = (u1 + u2) / np.linalg.norm(u1 + u2)
+                is_ax = abs(bis[1]) > abs(bis[0])
+                rho = rho_ax if is_ax else rho_sd
+                V = np.array([m * Bm, n * a]) + bis * (h / np.sin(phi / 2))
+                Vs.append(V)
+                if rho <= 0:
+                    continue
+                t = rho / np.tan(phi / 2)
+                d_ = rho / np.sin(phi / 2)
+                P1, P2 = V + u1 * t, V + u2 * t
+                O = V + bis * d_
+                a1 = np.arctan2((P1 - O)[1], (P1 - O)[0])
+                a2 = np.arctan2((P2 - O)[1], (P2 - O)[0])
+                da = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
+                arc = [O + rho * np.array([np.cos(a1 + da * q), np.sin(a1 + da * q)])
+                       for q in np.linspace(0, 1, 10)]
+                ax.add_patch(plt.Polygon(np.array([V] + [P1] + arc + [P2]),
+                                         closed=True, facecolor=RED, edgecolor="none"))
+            ax.add_patch(plt.Polygon(np.array(Vs), closed=True, facecolor=RED,
+                                     edgecolor="none"))
+    ax.set_xlim(0, 2 * Bm)
+    ax.set_ylim(0, (n_cell + 0.3) * a)
+    ax.set_aspect("equal")
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.set_title(title, fontsize=8, color=RED)
+
+
 def main():
     files, TH = [], []
     LIMS = compute_lims()
@@ -288,9 +350,12 @@ def main():
         k1 = theta_total / 0.3
         A = k1 * EI / (3 * R_DISK)
         ss, kfun = kappa_profile(theta_total)
-        fig = plt.figure(figsize=(6.6, 7.0))
-        ax = fig.add_subplot(111, projection="3d")
+        fig = plt.figure(figsize=(11.5, 6.6))
+        ax = fig.add_subplot(1, 2, 1, projection="3d")
         draw(ax, kfun, ss, A, theta_total, LIMS)
+        axz = fig.add_subplot(1, 2, 2)
+        panel_zoom(axz, ALPHA_A, R_AX, R_SD_A,
+                   f"段1 局部放大（同一几何）\nα={ALPHA_A}° 轴向R={R_AX} 侧向尖")
         fig.tight_layout()
         fn = f"/tmp/_b3d_{idx:03d}.png"
         fig.savefig(fn, dpi=150)
