@@ -81,7 +81,7 @@ def band(p0, p1, w=W_STRUT):
     return np.array([p0 + n, p1 + n, p1 - n, p0 - n])
 
 
-def node_fillet_polys(cx, cy, a, rho=1.0, h=H_OFF, n=9):
+def node_fillet_polys(cx, cy, a, rho_axial=1.0, rho_side=1.0, h=H_OFF, n=9):
     """节点处 4 个扇区的切线圆角。
 
     每个扇区夹在两条筋的**内边线**之间（各内缩 h=w/2）：
@@ -102,7 +102,9 @@ def node_fillet_polys(cx, cy, a, rho=1.0, h=H_OFF, n=9):
         bis = u1 + u2
         bis /= np.linalg.norm(bis)
         # 角平分线偏轴向(|bis_y|>|bis_x|) ⇒ 该扇区是"轴向尖角"
-        axial.append(abs(bis[1]) > abs(bis[0]))
+        is_ax = abs(bis[1]) > abs(bis[0])
+        axial.append(is_ax)
+        rho = rho_axial if is_ax else rho_side
         V = np.array([cx, cy]) + bis * (h / np.sin(phi / 2))
         Vs.append(V)
         if rho > 0:
@@ -121,9 +123,10 @@ def node_fillet_polys(cx, cy, a, rho=1.0, h=H_OFF, n=9):
     return np.array(Vs), wedges, axial
 
 
-def panel(ax, alpha, fillets, title, rho=1.0, only_axial=False):
+def panel(ax, alpha, fillets, title, rho=1.0, rho_axial=None, only_axial=False):
     """only_axial=True 时只对轴向扇区倒圆（段1），False 时四个扇区都倒（段2）。"""
     fillets_any = any(fillets)
+    rho_ax = rho if rho_axial is None else rho_axial
     """白底（=孔），材料只画成 1.5 mm 细带 + 节点圆盘。
 
     ⚠ 之前"红底挖菱形孔"是错的：菱形只占平面一半，**菱形之间的空隙也是孔**，
@@ -156,8 +159,10 @@ def panel(ax, alpha, fillets, title, rho=1.0, only_axial=False):
                 continue
             cx, cy = m * B, n * a
             # 圆角按**扇区方向**选：段1 只倒轴向扇区(上下)，段2 四个扇区都倒
-            Vs, wedges, axial = node_fillet_polys(cx, cy, a,
-                                                  rho=rho if fillets_any else 0.0)
+            Vs, wedges, axial = node_fillet_polys(
+                cx, cy, a,
+                rho_axial=rho_ax if fillets_any else 0.0,
+                rho_side=rho if fillets_any else 0.0)
             ax.add_patch(Polygon(Vs, closed=True, facecolor=RED,
                                  edgecolor="none", zorder=3))
             if fillets_any:
@@ -181,7 +186,7 @@ def panel(ax, alpha, fillets, title, rho=1.0, only_axial=False):
     n_nodes = 2.0                       # 每孔占地 4Ba 内有 2 个节点
     mat = (2 * L * W_STRUT + 0.6 * n_nodes * np.pi * node_r ** 2) / (4 * B * a)
     ax.set_title(f"{title}\nα={alpha}°  a={a:.2f}  节距={pa:.2f}  "
-                 f"w={W_STRUT}  R={rho}\n材料 {mat*100:.0f}% / 开孔 {(1-mat)*100:.0f}%",
+                 f"w={W_STRUT}  R轴={rho_ax} R侧={rho}\n材料 {mat*100:.0f}% / 开孔 {(1-mat)*100:.0f}%",
                  fontsize=9, color=RED)
     return mat
 
@@ -192,8 +197,8 @@ def main():
                f"① 段1（靠基座）：只倒轴向尖角 R={RHO_A}", rho=RHO_A,
                only_axial=True)
     f2 = panel(axes[1], 20.0, [True, True, True, True],
-               f"② 段2：α=20°，四角全倒 R={RHO_B}", rho=RHO_B,
-               only_axial=False)
+               f"② 段2：α=20°，四角全倒（轴向 R=2.0 / 侧向 R={RHO_B}）",
+               rho=RHO_B, rho_axial=2.0, only_axial=False)
     fig.suptitle(f"臂体平面展开图：红=材料（筋宽 {W_STRUT} mm；节点圆角为与两条内边线相切的圆弧：段1 R={RHO_A}（仅尖角）/ 段2 R={RHO_B}（四角））"
                  f"段1 R={RHO_A} mm（仅尖角）/ 段2 R={RHO_B} mm（四角）", fontsize=10)
     fig.tight_layout()
