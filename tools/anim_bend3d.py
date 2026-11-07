@@ -34,9 +34,12 @@ L1 = L2 = 0.2
 L_TOT = L1 + L2
 MU, NFRAME = 0.15, 15
 ROW_STEP = 1          # 每隔几行画一次筋（1=全画）
-B_MM = np.pi * R_OUT * 1e3 / 3.0
-A_MM = 4.167
-L_STRUT = np.hypot(A_MM, B_MM)
+B_MM = np.pi * R_OUT * 1e3 / 3.0        # 8.377 周向半节距（由 N_circ=3 锁定）
+# ── 两种变体（2026-11-08 用户描述）──────────────────────────────
+#   段1（靠基座, s∈[0,200]）：α 增大（菱形更"高"）、只给**轴向尖角**加圆角
+#   段2（s∈[200,400]）     ：α 减小（菱形更"扁"）、**所有角**都加圆角
+ALPHA_A, ALPHA_B = 34.0, 18.0           # deg（待实测确认）
+R_FIL_A, R_FIL_B = 1.2, 1.2             # mm
 N_INT = 240                      # 骨架积分点数
 
 
@@ -76,10 +79,22 @@ def surface(P, Rm, sg, s_m, theta, r):
     return p + R @ np.array([r * np.cos(theta), r * np.sin(theta), 0.0])
 
 
-def ab(eps):
-    a = float(np.clip(A_MM * (1.0 + eps), 0.3, 0.985 * L_STRUT))
-    b = float(np.sqrt(max(L_STRUT ** 2 - a ** 2, 0.0)))
-    return a, b
+def seg_alpha(s_m):
+    return ALPHA_A if s_m <= L1 else ALPHA_B
+
+
+def seg_L(s_m):
+    """该段的斜撑长（由 α 与固定周向半节距决定）。"""
+    return B_MM / np.cos(np.radians(seg_alpha(s_m)))
+
+
+def ab(eps, s_m):
+    """返回 (轴向半对角 a, 周向半对角 b, 该段斜撑长 L)。"""
+    L = seg_L(s_m)
+    a0 = L * np.sin(np.radians(seg_alpha(s_m)))
+    a = float(np.clip(a0 * (1.0 + eps), 0.3, 0.985 * L))
+    b = float(np.sqrt(max(L ** 2 - a ** 2, 0.0)))
+    return a, b, L
 
 
 def strut(P, Rm, sg, thA, sA, thB, sB, n=8):
@@ -114,10 +129,11 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     rows, s_cur = [], 0.0
     while s_cur < L_TOT - 1e-6:
         eps = -float(np.interp(s_cur, ss, kfun)) * R_OUT
-        a, b = ab(eps)
-        rows.append(dict(s=s_cur, a=a, b=b, eps=eps))
+        a, b, Ls = ab(eps, s_cur)
+        rows.append(dict(s=s_cur, a=a, b=b, eps=eps, seg=(0 if s_cur <= L1 else 1),
+                         L=Ls, alpha=seg_alpha(s_cur)))
         s_cur += 2 * a * 1e-3
-    rows.append(dict(s=L_TOT, a=rows[-1]["a"], b=rows[-1]["b"], eps=rows[-1]["eps"]))
+    rows.append(dict(**{**rows[-1], "s": L_TOT}))
 
     quads, cols = [], []
     for i in range(0, len(rows) - 1, ROW_STEP):
@@ -169,6 +185,19 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
     ax.add_collection3d(bpc)
     ax.text(0, 0, zb0 - 0.004, "固定基座", fontsize=7, color="0.25",
             ha="center", zorder=7)
+
+    # ── 节点圆角标记（段1 只标轴向尖角，段2 全标）────────────────
+    for i, r in enumerate(rows):
+        axial_tip = (i % 2 == 0)
+        if r["seg"] == 0 and not axial_tip:
+            continue
+        rf = R_FIL_A if r["seg"] == 0 else R_FIL_B
+        for j in range(6):
+            thj = j * np.pi / 3
+            pj = surface(P, Rm, sg, r["s"], thj, R_OUT)
+            ax.plot([pj[0]], [pj[1]], [pj[2]], "o", color="white",
+                    markeredgecolor="#6E3234", markeredgewidth=0.4,
+                    ms=max(1.2, rf * 1.6))
 
     span = rows[-1]["s"]
     # 坐标范围：所有帧共用同一套（否则相机跟着包围盒走 ⇒ 看起来整体平移）
