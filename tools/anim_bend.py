@@ -171,14 +171,25 @@ def draw_unrolled(ax, kfun, ss, sign, title):
         x += 2 * a
     eps0 = sign * kfun[0] * R_O
     epsL = sign * kfun[-1] * R_O
-    ax.set_xlim(-5, x + 5)
+    # ⚠ 坐标轴必须固定：否则每帧跟着阵列长度缩放，缩短/拉长就看不见
+    ax.set_xlim(-6, L_TOT * 1e3 * 1.12)
     ax.set_ylim(-6, 3 * 2 * B0 + 6)
     ax.set_aspect("equal")
     ax.tick_params(labelsize=6)
     ax.set_xlabel("变形后弧长 (mm)", fontsize=7)
     ax.set_ylabel("周向 (mm)", fontsize=7)
-    ax.set_title(f"{title}\n根部 ε={eps0*100:+.1f}%  末端 ε={epsL*100:+.1f}%",
+    ax.set_title(f"{title}\nε: 根 {eps0*100:+.1f}% → 端 {epsL*100:+.1f}%   "
+                 f"变形后总长 {x:.1f} mm (原 400.0)",
                  fontsize=8, color=GREEN if sign < 0 else RED)
+    # 未变形总长参考线
+    ax.axvline(L_TOT * 1e3, color="0.55", ls="--", lw=0.8)
+    ax.text(L_TOT * 1e3 + 2, 3 * B0, "未变形\n400 mm", fontsize=6,
+            color="0.45", va="center")
+    # 首胞未变形轮廓参考
+    a0, b0 = ab(0.0)
+    ax.add_patch(plt.Polygon([[0, b0], [a0, 2 * b0], [2 * a0, b0], [a0, 0]],
+                             closed=True, fill=False, ls="--", ec="0.35",
+                             lw=0.9, zorder=5))
 
 
 def main():
