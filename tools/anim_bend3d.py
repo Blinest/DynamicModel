@@ -237,10 +237,16 @@ def draw(ax, kfun, ss, A, theta_total, lims=None):
                     continue
                 sv0 = r["s"] + a_mm * 1e-3 + ds * 1e-3
                 th0 = th_c + dc / (R_OUT * 1e3)
-                ring = [surface(P, Rm, sg, sv0 + q[1] * 1e-3,
-                                th0 + q[0] / (R_OUT * 1e3), R_OUT + 0.02e-3)
-                        for q in w]
-                caps.append(ring)
+                # 圆角做成有厚度的板：外表面 + 内表面都画，
+                # 否则单一外表面与筋的 R_OUT 面几乎共面，会被深度排序压掉
+                ring_o = [surface(P, Rm, sg, sv0 + q[1] * 1e-3,
+                                  th0 + q[0] / (R_OUT * 1e3), R_OUT + 0.06e-3)
+                          for q in w]
+                ring_i = [surface(P, Rm, sg, sv0 + q[1] * 1e-3,
+                                  th0 + q[0] / (R_OUT * 1e3), R_IN - 0.02e-3)
+                          for q in w]
+                caps.append(ring_o)
+                caps.append(ring_i[::-1])
     if caps:
         cpc = Poly3DCollection(caps, facecolor="#8E4446", edgecolor="#4A2425",
                                linewidth=0.12, alpha=1.0)
