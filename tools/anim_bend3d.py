@@ -106,7 +106,7 @@ def strut(P, Rm, sg, thA, sA, thB, sB, n=8):
     return quads
 
 
-def draw(ax, kfun, ss, A, theta_total):
+def draw(ax, kfun, ss, A, theta_total, lims=None):
     ax.clear()
     sg, P, Rm = build_frames(kfun, ss)
 
@@ -167,13 +167,14 @@ def draw(ax, kfun, ss, A, theta_total):
             ha="center", zorder=7)
 
     span = rows[-1]["s"]
-    # ⚠ 必须用米：四边形坐标是米制，用毫米写 xlim 会把所有几何甩出视野（画面空白）
-    pmin, pmax = P.min(0), P.max(0)
-    ctr = 0.5 * (pmin + pmax)
-    half = 0.5 * float(np.max(pmax - pmin)) + 0.012
-    ax.set_xlim(ctr[0] - half, ctr[0] + half)
-    ax.set_ylim(ctr[1] - half, ctr[1] + half)
-    ax.set_zlim(ctr[2] - half, ctr[2] + half)
+    # 坐标范围：所有帧共用同一套（否则相机跟着包围盒走 ⇒ 看起来整体平移）
+    if lims is None:
+        pmin, pmax = P.min(0), P.max(0)
+        ctr = 0.5 * (pmin + pmax)
+        half = 0.5 * float(np.max(pmax - pmin)) + 0.012
+        lims = ((ctr[0] - half, ctr[0] + half), (ctr[1] - half, ctr[1] + half),
+                (ctr[2] - half, ctr[2] + half))
+    ax.set_xlim(*lims[0]); ax.set_ylim(*lims[1]); ax.set_zlim(*lims[2])
     ax.set_box_aspect((1, 1, 1))
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
@@ -182,8 +183,20 @@ def draw(ax, kfun, ss, A, theta_total):
                  fontsize=9)
 
 
+def compute_lims(theta=np.pi):
+    """用最大弯曲(180°)的骨架包围盒作为全帧固定视野。"""
+    ss, kf = kappa_profile(theta)
+    sg, P, Rm = build_frames(kf, ss)
+    pmin, pmax = P.min(0), P.max(0)
+    ctr = 0.5 * (pmin + pmax)
+    half = 0.5 * float(np.max(pmax - pmin)) + 0.012
+    return ((ctr[0] - half, ctr[0] + half), (ctr[1] - half, ctr[1] + half),
+            (ctr[2] - half, ctr[2] + half))
+
+
 def main():
     files, TH = [], []
+    LIMS = compute_lims()
     # 按目标角度驱动（末帧正好 180°）：θ = 0.9·A·r/EI
     for idx, theta_total in enumerate(np.linspace(0.0, np.pi, NFRAME)):
         k1 = theta_total / 0.3
@@ -191,7 +204,7 @@ def main():
         ss, kfun = kappa_profile(theta_total)
         fig = plt.figure(figsize=(5.6, 6.2))
         ax = fig.add_subplot(111, projection="3d")
-        draw(ax, kfun, ss, A, theta_total)
+        draw(ax, kfun, ss, A, theta_total, LIMS)
         fig.tight_layout()
         fn = f"/tmp/_b3d_{idx:03d}.png"
         fig.savefig(fn, dpi=95)
