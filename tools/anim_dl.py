@@ -48,7 +48,7 @@ def shape2d(k1):
 
 
 def main():
-    files = []
+    files, trail = [], []
     for k, deg in enumerate(np.linspace(0, 180, NFRAME)):
         tau, A, phi_cmd = C.solve_tension(deg, DIR)
         theta, phi_m, k1, k2, dL, sT = C.predict(tau)
@@ -69,12 +69,21 @@ def main():
             ax.plot(P[:, 0] + off * N[:, 0], P[:, 1] + off * N[:, 1],
                     color=RED if w in (0, 2, 4) else GREEN, lw=0.9, alpha=0.85)
         ax.plot(P[:1, 0], P[:1, 1], "s", color="k", ms=7)
-        ax.plot(P[-1, 0], P[-1, 1], "o", color=RED, ms=7)
+        ax.plot(P[-1, 0], P[-1, 1], "o", color=RED, ms=7, zorder=6)
+        # 末端轨迹（到此帧为止）
+        trail.append((P[-1, 0], P[-1, 1]))
+        if len(trail) > 1:
+            tx, tz = np.array(trail).T
+            ax.plot(tx, tz, "-", color=GREEN, lw=1.6, alpha=0.9, zorder=5)
+            ax.plot([tx[-1]], [tz[-1]], "o", color=GREEN, ms=4, zorder=7)
+        ax.annotate(f"({P[-1,0]:.0f}, {P[-1,1]:.0f}) mm", (P[-1, 0], P[-1, 1]),
+                    textcoords="offset points", xytext=(8, -12), fontsize=8.5,
+                    color=GREEN)
         ax.set_aspect("equal")
         ax.set_xlim(-300, 300); ax.set_ylim(-60, 470)
         ax.grid(alpha=0.18, ls=":")
         ax.set_xlabel("横向 x (mm)"); ax.set_ylabel("高度 z (mm)")
-        ax.set_title(f"θ = {theta:.1f}°   κ1={k1:.2f} κ2={k2:.2f} 1/m", fontsize=10)
+        ax.set_title(f"θ = {theta:.1f}°   末端 ({P[-1,0]:.0f}, {P[-1,1]:.0f}) mm\nκ1={k1:.2f}  κ2={k2:.2f} 1/m（绿线=末端轨迹）", fontsize=9.5)
         # 右：ΔL 柱
         cols = [RED if w in (0, 2, 4) else GREEN for w in range(6)]
         bars = axb.bar(range(6), dL, color=cols, alpha=0.9)
