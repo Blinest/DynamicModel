@@ -99,14 +99,18 @@ def build_mask():
         i1 = int(np.ceil(seg_hi / pa))
         for i in range(i0, i1 + 2):
             cy = i * pa + a
-            if cy < seg_lo - pa or cy > seg_hi + pa:
-                continue
-            for j in range(-1, 7):
-                for sh in (-CIRC, 0.0, CIRC):
-                    p = hole_poly(j * 2 * B + sh, cy, a, S["rho_ax"], S["rho_sd"])
-                    if p[:, 1].max() < seg_lo - 2 or p[:, 1].min() > seg_hi + 2:
-                        continue
-                    inside |= Path(p).contains_points(centers)
+            # 正交 2 族：第二族错开半个节距 (B, a)，两族合起来正好铺满
+            for fam_dx, fam_dy in ((0.0, 0.0), (B, a)):
+                cyf = cy + fam_dy
+                if cyf < seg_lo - pa or cyf > seg_hi + pa:
+                    continue
+                for j in range(-1, 7):
+                    for sh in (-CIRC, 0.0, CIRC):
+                        p = hole_poly(j * 2 * B + sh + fam_dx, cyf, a,
+                                      S["rho_ax"], S["rho_sd"])
+                        if p[:, 1].max() < seg_lo - 2 or p[:, 1].min() > seg_hi + 2:
+                            continue
+                        inside |= Path(p).contains_points(centers)
     return (nx, ny, ~inside.reshape(ny, nx))
 
 
