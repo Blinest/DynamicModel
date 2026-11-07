@@ -32,8 +32,8 @@ R_OUT, R_IN = 8e-3, 6.5e-3      # m（内部一律米制，避免与 P 混单位
 W_STRUT = 1.5e-3
 L1 = L2 = 0.2
 L_TOT = L1 + L2
-MU, NFRAME = 0.15, 25
-N_ROW = 8
+MU, NFRAME = 0.15, 15
+ROW_STEP = 1          # 每隔几行画一次筋（1=全画）
 B_MM = np.pi * R_OUT * 1e3 / 3.0
 A_MM = 4.167
 L_STRUT = np.hypot(A_MM, B_MM)
@@ -112,14 +112,15 @@ def draw(ax, kfun, ss, A, theta_total):
 
     # 节点行（沿 s 累积，按变形后节距）
     rows, s_cur = [], 0.0
-    for i in range(N_ROW + 1):
+    while s_cur < L_TOT - 1e-6:
         eps = -float(np.interp(s_cur, ss, kfun)) * R_OUT
         a, b = ab(eps)
         rows.append(dict(s=s_cur, a=a, b=b, eps=eps))
         s_cur += 2 * a * 1e-3
+    rows.append(dict(s=L_TOT, a=rows[-1]["a"], b=rows[-1]["b"], eps=rows[-1]["eps"]))
 
     quads, cols = [], []
-    for i in range(N_ROW):
+    for i in range(0, len(rows) - 1, ROW_STEP):
         r0, r1 = rows[i], rows[i + 1]
         dth = r0["b"] / (R_OUT * 1e3)    # 弧度：周向半节距（b 为 mm）
         for j in range(6):
@@ -151,13 +152,17 @@ def draw(ax, kfun, ss, A, theta_total):
                 color=RED, lw=0.9, alpha=0.85)
 
     span = rows[-1]["s"]
-    ax.set_xlim(-0.014, 0.014); ax.set_ylim(-0.014, 0.014)
-    ax.set_zlim(-0.001, span + 0.001)
-    ax.set_box_aspect((1, 1, max(span / 0.028, 0.45)))
+    pmin, pmax = P.min(0) * 1e3, P.max(0) * 1e3     # mm
+    ctr = 0.5 * (pmin + pmax)
+    half = 0.5 * float(max(pmax - pmin)) + 12.0
+    ax.set_xlim(ctr[0] - half, ctr[0] + half)
+    ax.set_ylim(ctr[1] - half, ctr[1] + half)
+    ax.set_zlim(ctr[2] - half, ctr[2] + half)
+    ax.set_box_aspect((1, 1, 1))
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
     ax.set_title(f"A={A:.2f} N  θ={np.degrees(theta_total):.1f}°  "
-                 f"ε_root={rows[0]['eps']*100:+.1f}%  窗口 {span*1e3:.0f} mm",
+                 f"ε_root={rows[0]['eps']*100:+.1f}%  全长 {span*1e3:.0f} mm",
                  fontsize=9)
 
 
