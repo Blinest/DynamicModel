@@ -35,14 +35,16 @@ import cosserat_lattice as CL
 
 __all__ = ["TdcrModelV2", "GEOM"]
 
+import geom_params as _G
+
 GEOM = dict(
-    NSEG=20,             # 20 个间隔盘 = 20 段
-    L_total=0.400,       # m
-    r_disk=0.005,        # 丝分布半径 5 mm
-    psi_deg=np.array([0, 60, 120, 180, 240, 300], float),
-    mu=0.0,              # 默认无摩擦（v1 同样不考虑摩擦）
-    b_fric=1.0,          # 摩擦几何因子
-    T0=10.0,             # 预紧 N
+    NSEG=_G.NSEG,                    # 20 个间隔盘 = 20 段（来自 geom_params）
+    L_total=_G.L_TOTAL,              # m
+    r_disk=_G.R_DISK,                # 丝分布半径 5 mm
+    psi_deg=np.array(_G.PSI_DEG, float),
+    mu=0.0,                          # 默认无摩擦（v1 同样不考虑摩擦）
+    b_fric=1.0,                      # 摩擦几何因子
+    T0=10.0,                         # 预紧 N
 )
 
 
@@ -53,7 +55,8 @@ def _hat(v):
 class TdcrModelV2:
     """20 段 TDCR 模型（刚度来自 cosserat_lattice）。"""
 
-    def __init__(self, mu=None, T0=None, n_sub=5, axial=True, **kw):
+    def __init__(self, mu=None, T0=None, n_sub=5, axial=True,
+                 stiffness=None, **kw):
         g = dict(GEOM); g.update(kw)
         self.g = g
         self.axial = bool(axial)      # 是否计入肌腱→轴向压缩耦合
@@ -62,12 +65,14 @@ class TdcrModelV2:
         self.mu = float(g["mu"] if mu is None else mu)
         self.T0 = float(g["T0"] if T0 is None else T0)
         self.n_sub = int(n_sub)
-        ks = CL.stiffness()
-        # 前一半段用段1 刚度，后一半用段2
-        half = self.N // 2
-        self.EI = np.array([ks[0]["EI"]] * half + [ks[1]["EI"]] * (self.N - half))
-        self.EA = np.array([ks[0]["EA"]] * half + [ks[1]["EA"]] * (self.N - half))
-        self.GJ = np.array([ks[0]["GJ"]] * half + [ks[1]["GJ"]] * (self.N - half))
+        # ★ 刚度**注入**：力学层不认识几何，只吃这份契约
+        #    stiffness = dict(EI=(N,), EA=(N,), GJ=(N,)) 或 None（默认取自几何层）
+        if stiffness is None:
+            stiffness = CL.arrays(self.N)
+        self.stiffness = stiffness
+        self.EI = np.asarray(stiffness["EI"], float)
+        self.EA = np.asarray(stiffness["EA"], float)
+        self.GJ = np.asarray(stiffness["GJ"], float)
         self.psi = np.radians(g["psi_deg"])
 
     # ── 内部：张力分布 ───────────────────────────────────────────
@@ -174,8 +179,9 @@ class TdcrModelV2:
         """反解：给定目标弯角，求单侧对称张力 τ（3 根同拉）。"""
         for _ in range(60):
             mid = 0.5 * (lo + hi)
-            tau = np.zeros(6)
-            tau[[0, 1, 5]] = mid if target_deg >= 0 else 0.0
+            # ⚠ 用余弦律 τ = T0 + A·cos(ψ−0)，**不要把其余丝置 0**：
+            #   置 0 等于把预紧拿掉，轴向净载荷变成 +Σ T0（虚假拉伸）
+            tau = np.maximum(0.0, self.T0 + mid * np.cos(self.psi))
             b = self.bend_angle(tau, F_tip=F_tip)
             if abs(b - target_deg) < tol:
                 return mid, b, tau
