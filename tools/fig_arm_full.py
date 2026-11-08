@@ -123,16 +123,15 @@ def build_mask(theta_total):
     return nx, ny, mat
 
 
-def comp_force(theta_mm, s_mm, ss, kf):
-    """该处的**压缩力**大小 (N)：F<0 表示受压，返回 max(0, -F)。"""
+def axial_force(theta_mm, s_mm, ss, kf):
+    """该处斜撑的**带符号轴力** (N)：F>0 受拉、F<0 受压。"""
     kap = float(np.interp(s_mm * 1e-3, ss, kf))          # 1/m
     alpha = F.seg_params(s_mm)[0] if False else None
     a_deg = (M.ALPHA_A if s_mm <= L_SEG else M.ALPHA_B)
     w_mm = 2.0
     A = (w_mm * 1e-3) * (1.5e-3)                          # 筋截面积 m²
     eps = kap * M.R_OUT * np.cos(theta_mm / R_OUT_MM)      # 膜应变
-    F_ = M_E_MOD * (eps * np.sin(np.radians(a_deg))) * A
-    return max(0.0, -F_)
+    return M_E_MOD * (eps * np.sin(np.radians(a_deg))) * A
 
 
 M_E_MOD = 2.0e8
@@ -149,15 +148,19 @@ def render(ax, theta_total, nx, ny, mat, title):
         pts = [M.surface(P, Rm, sg, yy * 1e-3, xx / R_OUT_MM, M.R_OUT + 0.03e-3)
                for xx, yy in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
         quads.append(pts)
-        comps.append(comp_force(0.5 * (x0 + x1), 0.5 * (y0 + y1), ss, kf))
+        comps.append(axial_force(0.5 * (x0 + x1), 0.5 * (y0 + y1), ss, kf))
     keep = [i for i, q in enumerate(quads)
             if np.isfinite(np.asarray(q)).all()]
     quads = [quads[i] for i in keep]
     comps = np.array([comps[i] for i in keep])
-    cmax = max(comps.max(), 1e-9)
+    fmax = max(np.abs(comps).max(), 1e-9)
     pc = Poly3DCollection(quads, edgecolor="none", linewidth=0, antialiased=True)
     import matplotlib.cm as cm
-    pc.set_facecolor(cm.coolwarm(comps / cmax))     # 蓝=力小, 红=压缩大
+    # 发散映射：F/Fmax = +1(受拉最大) -> coolwarm(0)=深蓝
+    #           F/Fmax = -1(受压最大) -> coolwarm(1)=深红
+    #           F ≈ 0                -> coolwarm(0.5)=浅色
+    t = np.clip(comps / fmax, -1.0, 1.0)
+    pc.set_facecolor(cm.coolwarm((1.0 - t) / 2.0))
     ax.add_collection3d(pc)
     half = 0.432
     ax.set_xlim(-0.34, 0.34)
@@ -168,8 +171,9 @@ def render(ax, theta_total, nx, ny, mat, title):
     ax.set_box_aspect((dx / m_, dy / m_, dz / m_), zoom=1.05)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
-    ax.set_title(f"{title}   最大压缩力 {cmax:.1f} N", fontsize=9, color=RED)
-    return cmax
+    ax.set_title(f"{title}   峰值 ±{fmax:.1f} N  （深红=受压 / 深蓝=受拉）",
+                 fontsize=9, color=RED)
+    return fmax
 
 
 def main():
