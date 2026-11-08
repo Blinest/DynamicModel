@@ -33,8 +33,8 @@ rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "DejaVu Sans"]
 rcParams["axes.unicode_minus"] = False
 RED, BLUE, GREEN = "#A34D4E", "#516CA3", "#8DAE7F"
 
-DS = 1.0
-NFRAME = 8
+DS = 1.3
+NFRAME = 40
 THETA_MAX = 90.0
 R_OUT_MM = F.R_OUT_MM
 CIRC = F.CIRC
@@ -240,7 +240,7 @@ def main():
         # 总标题已去除
         fig.tight_layout()
         fn = f"/tmp/_bm_{kf:02d}.png"
-        fig.savefig(fn, dpi=110)
+        fig.savefig(fn, dpi=85)
         plt.close(fig)
         files.append(fn)
         print(f"  帧 {kf}: θ={deg:4.0f}°", flush=True)
