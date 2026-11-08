@@ -125,10 +125,29 @@ def build_mask(kvec):
     return nx, ny, mat
 
 
-def dl_of(kvec):
-    """6 路驱动丝位移：A 段丝累计前 6 段转角，B 段丝累计全部。"""
-    th = kvec * S12.SEG_LEN                # 每段转角 (rad)
-    return M.R_DISK * np.sum(th[:6]) * 1e3, M.R_DISK * np.sum(th) * 1e3
+ALPHA_W = np.array([0, 60, 120, 180, 240, 300], float)
+SEG_A = [0, 2, 4]
+SEG_B = [1, 3, 5]
+
+
+def dl6(kvec, phi_b=0.0):
+    """6 根丝的收丝量 (mm)，**只允许受拉**。
+
+    丝长变化由臂体曲率决定：
+        δL_w = −r · θ_span_w · cos(θ_w − φ_b)
+    其中 θ_span 为该丝的**跨越段**累积转角（A 段丝只跨前 6 段，B 段丝跨全部），
+    φ_b 为弯曲方位（本图取 0，即 +x 为凹侧）。
+    丝只能拉 ⇒ 实际收丝量 = max(0, −δL_w)；δL_w>0（需伸长）的丝**松弛**，位移 0。
+    """
+    th = kvec * S12.SEG_LEN                 # 每段转角 (rad)
+    thA, thB = float(np.sum(th[:6])), float(np.sum(th))
+    al = np.radians(ALPHA_W)
+    out = np.zeros(6)
+    for w in range(6):
+        span = thA if w in SEG_A else thB
+        dL = -M.R_DISK * span * np.cos(al[w] - phi_b) * 1e3
+        out[w] = max(0.0, -dL)
+    return out
 
 
 def force_at(kap, s_m, theta_mm):
@@ -198,8 +217,7 @@ def main():
             render(ax, kv, nx, ny, mat, f"{nm}  θ={deg:.0f}°", lims)
             # 下方：6 根丝的位移
             axb = fig.add_subplot(gs[1, j])
-            dlA, dlB = dl_of(kv)
-            d6 = np.array([dlA, dlB, dlA, dlB, dlA, dlB])
+            d6 = dl6(kv)
             cols = [RED if k in (0, 2, 4) else GREEN for k in range(6)]
             axb.bar(range(6), d6, color=cols, alpha=0.92)
             for kk in range(6):
@@ -213,7 +231,9 @@ def main():
             axb.grid(alpha=0.25, ls=":", axis="y")
             if j == 0:
                 axb.set_ylabel("ΔL (mm)", fontsize=8)
-            axb.set_title(f"{nm}：6 路位移（红=A 段/绿=B 段）", fontsize=7.5)
+            n_pull = int((d6 > 1e-6).sum())
+            axb.set_title(f"{nm}：6 路收丝量（{n_pull} 根受拉 / "
+                          f"{6-n_pull} 根松弛）", fontsize=7.5)
         fig.suptitle("四种弯曲模式的三维动图（红=受压/蓝=受拉/灰≈零）", fontsize=10)
         fig.tight_layout()
         fn = f"/tmp/_bm_{kf:02d}.png"
