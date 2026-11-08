@@ -89,16 +89,19 @@ class TdcrModelV2:
             for _ in range(self.n_sub):
                 ds = self.ds / self.n_sub
                 taus = self._tau_of_s(tau, np.array([phi]))[0]
-                # 腱力矩（体坐标）
+                # 腱力矩：丝在 (r cosψ, r sinψ)，拉力沿 −z
+                #   M = p × F = r·τ·(−sinψ, +cosψ, 0)
+                # ψ=0 的丝 => M 沿 +y => 绕 y 正转 => e_z 偏向 +x（朝该丝弯）
                 rd = self.g["r_disk"]
-                M = np.array([rd * np.sum(taus * np.cos(self.psi)),
-                              rd * np.sum(taus * np.sin(self.psi)),
-                              0.0])
-                # 尖端力力矩：力在体坐标下 (L−s) 力臂
+                Mx = -rd * np.sum(taus * np.sin(self.psi))
+                My = rd * np.sum(taus * np.cos(self.psi))
+                # 尖端力力矩（体坐标）
                 if np.any(Ft):
-                    M = M + np.cross(np.array([0, 0, self.g["L_total"] - s]),
-                                     R.T @ Ft)
-                kap = M[:2] / ei                     # 只保留弯曲分量
+                    Mt = np.cross(np.array([0.0, 0.0, self.g["L_total"] - s]),
+                                  R.T @ Ft)
+                    Mx += Mt[0]
+                    My += Mt[1]
+                kap = np.array([Mx, My]) / ei          # κ = M/EI（弯 2 分量）
                 kvec = np.array([kap[0], kap[1], 0.0])
                 p = p + (R @ np.array([0, 0, 1.0])) * ds
                 R = R @ (np.eye(3) + _hat(kvec) * ds +
@@ -136,7 +139,9 @@ class TdcrModelV2:
         phiB = phi[-1]
         # 弯曲方位
         kmean = kap[:, :2].sum(0)
-        phi_b = np.arctan2(kmean[1], kmean[0]) if np.any(kmean) else 0.0
+        # κ 的方位角：κ=(Mx,My)/EI 沿 (−sinψ_b, cosψ_b) => ψ_b = atan2(−κx, κy)
+        phi_b = (np.arctan2(-kmean[0], kmean[1])
+                 if np.any(np.abs(kmean) > 1e-12) else 0.0)
         out = np.zeros(6)
         for w, psi in enumerate(self.psi):
             span = phiA if w % 2 == 0 else phiB          # M1/M3/M5 = A 段
