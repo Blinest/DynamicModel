@@ -23,7 +23,7 @@ R_DISK = 5e-3
 L = 0.4
 L1 = 0.2
 MU = 0.15
-NSEG = 12
+NSEG = 20          # 真实样机 20 个间隔盘 = 20 段（每段 20 mm）
 SEG_LEN = L / NSEG
 T0 = 10.0
 

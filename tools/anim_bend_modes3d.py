@@ -46,15 +46,19 @@ E_MOD = 2.0e8
 
 
 def k12(mode, theta_deg):
+    """20 段曲率场（真实样机 20 个间隔盘）。"""
+    n = S12.NSEG
+    h = n // 2
     base = S12.kappa_vec(theta_deg, p=1.0)
     if mode == "C":
         return base
     if mode == "S":
-        k = base.copy(); k[6:] = -np.abs(base[6:]); return k
+        k = base.copy(); k[h:] = -np.abs(base[h:]); return k
     if mode == "S_rev":
-        k = base.copy(); k[:6] = -np.abs(base[:6]); return k
+        k = base.copy(); k[:h] = -np.abs(base[:h]); return k
     if mode == "wave":
-        sgn = np.array([+1] * 3 + [-1] * 3 + [+1] * 3 + [-1] * 3, float)
+        # 每 5 段换号（20 段 → 4 个半波）
+        sgn = np.array([(-1.0) ** (i // 5) for i in range(n)], float)
         return base * sgn
     raise ValueError(mode)
 
@@ -140,7 +144,8 @@ def dl6(kvec, phi_b=0.0):
     丝只能拉 ⇒ 实际收丝量 = max(0, −δL_w)；δL_w>0（需伸长）的丝**松弛**，位移 0。
     """
     th = kvec * S12.SEG_LEN                 # 每段转角 (rad)
-    thA, thB = float(np.sum(th[:6])), float(np.sum(th))
+    h = S12.NSEG // 2
+    thA, thB = float(np.sum(th[:h])), float(np.sum(th))
     al = np.radians(ALPHA_W)
     out = np.zeros(6)
     for w in range(6):
