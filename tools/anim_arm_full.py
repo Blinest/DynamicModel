@@ -41,6 +41,20 @@ def aspect_of(lims):
     return (dx / m, dy / m, dz / m)
 
 
+# ── 受力色标：深蓝(受拉) → 浅灰(不受力) → 深红(受压) ──────────
+from matplotlib.colors import LinearSegmentedColormap as _LSC
+CMAP_F = _LSC.from_list("fg", ["#08306b", "#d9d9d9", "#67000d"])
+GRAY_F = (0.85, 0.85, 0.85, 1.0)
+F_DEAD = 0.02          # |F|/FMAX < 2% 视为不受力 => 浅灰
+
+
+def force_colors(comps, fmax):
+    t = np.clip(comps / max(fmax, 1e-12), -1.0, 1.0)
+    cols = CMAP_F((1.0 - t) / 2.0)
+    cols[np.abs(t) < F_DEAD] = GRAY_F
+    return cols
+
+
 def axial_force(theta_mm, s_mm, ss, kf):
     """该处斜撑的带符号轴力 (N)：F>0 受拉、F<0 受压（+x 为凹侧，ε=-κRcosθ）。"""
     kap = float(np.interp(s_mm * 1e-3, ss, kf))
@@ -80,8 +94,7 @@ def render_fixed(ax, theta_total, nx, ny, mat, title, lims, fmax):
     quads = [quads[i] for i in keep]
     comps = np.array([comps[i] for i in keep])
     pc = Poly3DCollection(quads, edgecolor="none", linewidth=0, antialiased=True)
-    t = np.clip(comps / fmax, -1.0, 1.0)      # +1 受拉最大(深蓝) / −1 受压最大(深红)
-    pc.set_facecolor(cm.seismic((1.0 - t) / 2.0))
+    pc.set_facecolor(force_colors(comps, fmax))
     ax.add_collection3d(pc)
     ax.set_xlim(*lims[0]); ax.set_ylim(*lims[1]); ax.set_zlim(*lims[2])
     ax.set_box_aspect(aspect_of(lims), zoom=1.05)

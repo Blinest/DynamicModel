@@ -123,6 +123,20 @@ def build_mask(theta_total):
     return nx, ny, mat
 
 
+# ── 受力色标：深蓝(受拉) → 浅灰(不受力) → 深红(受压) ──────────
+from matplotlib.colors import LinearSegmentedColormap as _LSC
+CMAP_F = _LSC.from_list("fg", ["#08306b", "#d9d9d9", "#67000d"])
+GRAY_F = (0.85, 0.85, 0.85, 1.0)
+F_DEAD = 0.02          # |F|/FMAX < 2% 视为不受力 => 浅灰
+
+
+def force_colors(comps, fmax):
+    t = np.clip(comps / max(fmax, 1e-12), -1.0, 1.0)
+    cols = CMAP_F((1.0 - t) / 2.0)
+    cols[np.abs(t) < F_DEAD] = GRAY_F
+    return cols
+
+
 def axial_force(theta_mm, s_mm, ss, kf):
     """该处斜撑的**带符号轴力** (N)：F>0 受拉、F<0 受压。"""
     kap = float(np.interp(s_mm * 1e-3, ss, kf))          # 1/m
@@ -162,9 +176,7 @@ def render(ax, theta_total, nx, ny, mat, title):
     # 发散映射：F/Fmax = +1(受拉最大) -> coolwarm(0)=深蓝
     #           F/Fmax = -1(受压最大) -> coolwarm(1)=深红
     #           F ≈ 0                -> coolwarm(0.5)=浅色
-    t = np.clip(comps / fmax, -1.0, 1.0)
-    # seismic 对比度比 coolwarm 高：深红/深蓝更分明
-    pc.set_facecolor(cm.seismic((1.0 - t) / 2.0))
+    pc.set_facecolor(force_colors(comps, fmax))
     ax.add_collection3d(pc)
     half = 0.432
     ax.set_xlim(-0.34, 0.34)
