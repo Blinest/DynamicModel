@@ -28,9 +28,9 @@ def contours(d):
     th, ph, F = d["theta"], d["phi"], d["F"]
     sel = F == 0.0                       # 只看无外力那一半（1500 点）
     th, ph = th[sel], ph[sel]
-    tip = d["tip"][sel]
+    tip = d["tip_mm"][sel]
     tmax = d["tau"][sel].max(1)
-    dlmax = d["dl"][sel].max(1)
+    dlmax = d["dL_mm"][sel].max(1)
 
     TH = np.unique(th); PH = np.unique(ph)
     def grid(v):
@@ -77,7 +77,7 @@ def contours(d):
 def cloud(d):
     fig = plt.figure(figsize=(9.5, 8.2))
     ax = fig.add_subplot(111, projection="3d")
-    tip = d["tip"]; th = d["theta"]
+    tip = d["tip_mm"]; th = d["theta"]
     sel = d["F"] == 0.0
     sc = ax.scatter(tip[sel, 0], tip[sel, 1], tip[sel, 2], c=th[sel],
                     cmap="turbo", s=5, alpha=0.85)

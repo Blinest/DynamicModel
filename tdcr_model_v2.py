@@ -106,7 +106,9 @@ class TdcrModelV2:
                 kvec = np.array([kap[0], kap[1], 0.0])
                 # ── 轴向耦合：腱张力把臂体压短 ────────────────────
                 #   n_z = −Στ_j − F_tip·e_z(体)   ⇒   ε = n_z/EA
-                n_z = -float(np.sum(taus))
+                # ⚠ 只算**超出预紧**的净载荷：全丝 =T0 时净载荷为 0，
+                #   直臂不应有轴向缩短（否则 θ=0 时 ΔL≠0，是错的）
+                n_z = -float(np.sum(taus - self.T0))
                 if np.any(Ft):
                     n_z -= float(Ft @ (R @ np.array([0.0, 0.0, 1.0])))
                 eps = (n_z / self.EA[i]) if self.axial else 0.0
@@ -153,7 +155,7 @@ class TdcrModelV2:
         # 轴向压缩量：按各自跨度取（A 段丝半跨、B 段丝全跨）
         eps_mean = 0.0
         if self.axial:
-            n_z = -float(np.sum(tau))
+            n_z = -float(np.sum(tau - self.T0))
             eps_mean = -n_z / float(self.EA.mean())    # >0 = 缩短
         half_len = self.g["L_total"] * 0.5
         for w, psi in enumerate(self.psi):

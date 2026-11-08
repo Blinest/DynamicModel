@@ -24,7 +24,7 @@ EI1, EI2 = 0.01499, 0.01266
 def main():
     z = np.load("model_v2/table.npz")
     sel = z["F"] == 0.0
-    nodes = z["nodes"][sel]          # (1500, 61, 3)
+    nodes = z["nodes_mm"][sel]          # (1500, 61, 3)
     th = z["theta"][sel]
     tau = z["tau"][sel]
     n, nn, _ = nodes.shape

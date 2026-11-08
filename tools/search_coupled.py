@@ -58,7 +58,7 @@ class CoupledModel:
         km = o["kappa"][:, :2].sum(0)
         phi_b = np.arctan2(-km[0], km[1]) if np.any(np.abs(km) > 1e-12) else 0.0
         bend_only = np.zeros(6); ax_only = np.zeros(6)
-        eps = -(-float(np.sum(tau)) / float(self._m.EA.mean()))
+        eps = -(-float(np.sum(tau - self._m.T0)) / float(self._m.EA.mean()))
         half_len = self._m.g["L_total"] * 0.5
         for w, ps in enumerate(PSI):
             span_is_A = (w % 2 == 0)

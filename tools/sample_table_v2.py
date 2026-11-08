@@ -84,7 +84,7 @@ def dl_from_out(m, tau, o):
     # 轴向压缩（耦合项）：ε = −Στ/EA，A 段丝半跨、B 段丝全跨
     eps = 0.0
     if getattr(m, "axial", False):
-        eps = (-float(np.sum(tau)) / float(m.EA.mean()))
+        eps = (-float(np.sum(tau - m.T0)) / float(m.EA.mean()))
     half_len = m.g["L_total"] * 0.5
     out = np.zeros(6)
     for w, ps in enumerate(m.psi):
@@ -103,10 +103,17 @@ def main():
     n = NTHETA * NPHI * len(FLIST)
     print(f"采点：{NTHETA} θ × {NPHI} φ × {len(FLIST)} F = {n} 点")
 
+    # ── 与 model/vc_table_*.npz 对齐的字段 ──────────────────────
+    R_tip_a = np.zeros((n, 3, 3)); kS_a = np.zeros((n, NNODE))
+    kK_a = np.zeros((n, NNODE, 3)); kV_a = np.zeros((n, NNODE, 3))
+    x_a = np.zeros((n, 6)); res_a = np.zeros(n)
+    p_tip_m = np.zeros((n, 3))
     theta_a = np.zeros(n); phi_a = np.zeros(n); F_a = np.zeros(n)
     tau_a = np.zeros((n, 6)); tip_a = np.zeros((n, 3))
     bend_a = np.zeros(n); dl_a = np.zeros((n, 6))
     nodes_a = np.zeros((n, NNODE, 3))
+    kappa_a = np.zeros((n, NNODE))          # 沿臂曲率幅值 (1/m)
+    kseg_a = np.zeros((n, V2.GEOM['NSEG']))  # 逐段平均曲率
 
     k = 0
     t0 = time.time()
@@ -121,16 +128,55 @@ def main():
                 bend_a[k] = b
                 dl_a[k] = dl_from_out(m, tau, o)
                 nodes_a[k] = resample(o["p"]) * 1e3
+                # ── 旧表同名量 ──
+                p_tip_m[k] = o["p"][-1]
+                R_tip_a[k] = o["R"][-1]
+                ss = o["s"]; kk3 = o["kappa"]
+                kS_a[k] = np.linspace(ss[0], ss[-1], NNODE)
+                kK_a[k] = np.column_stack([
+                    np.interp(kS_a[k], ss, kk3[:, j]) for j in range(3)])
+                # 切向单位矢量（对应旧表的 kV）
+                d = np.gradient(o["p"], axis=0)
+                d /= np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-12)
+                kV_a[k] = np.column_stack([
+                    np.interp(kS_a[k], ss, d[:, j]) for j in range(3)])
+                # x = [弯曲方向 cos, sin, 0, 根部 κx, κy, 0]（对应旧表的初值态）
+                k0 = kk3[1]
+                x_a[k] = [np.cos(np.radians(ph)), np.sin(np.radians(ph)), 0.0,
+                          k0[0], k0[1], k0[2]]
+                res_a[k] = b - th
+                kk = np.linalg.norm(o["kappa"][:, :2], axis=1)
+                kappa_a[k] = np.interp(np.linspace(0, len(kk) - 1, NNODE),
+                                       np.arange(len(kk)), kk)
+                # 逐段平均（每段 n_sub+1 个节点）
+                ns = m.n_sub
+                kseg_a[k] = [kk[i * ns + 1:(i + 1) * ns + 1].mean()
+                             for i in range(V2.GEOM['NSEG'])]
                 k += 1
         el = time.time() - t0
         print(f"  θ={th:6.1f}°  完成 {k:4d}/{n}  用时 {el:5.1f}s "
               f"（预计总 {el/k*n:5.0f}s）", flush=True)
 
     os.makedirs("model_v2", exist_ok=True)
-    np.savez_compressed("model_v2/table.npz",
-                        theta=theta_a, phi=phi_a, F=F_a, tau=tau_a,
-                        tip=tip_a, bend=bend_a, dl=dl_a, nodes=nodes_a,
-                        meta=np.array([NTHETA, NPHI, len(FLIST), NNODE, T0]))
+    import json
+    ver = json.dumps({"model": "tdcr_model_v2", "NSEG": V2.GEOM["NSEG"],
+                      "EI": [float(m.EI[0]), float(m.EI[-1])],
+                      "EA": [float(m.EA[0]), float(m.EA[-1])],
+                      "r_disk": V2.GEOM["r_disk"], "T0": T0,
+                      "axial": bool(getattr(m, "axial", True)),
+                      "mu": float(m.mu), "nodes": NNODE,
+                      "n": int(n), "angle_max": 180.0}, sort_keys=True)
+    np.savez_compressed(
+        "model_v2/table.npz",
+        # ★ 与 model/ 旧表同名同义
+        tau=tau_a, dL_mm=dl_a, p_tip=p_tip_m, R_tip=R_tip_a,
+        kS=kS_a, kK=kK_a, kV=kV_a, res=res_a, x=x_a,
+        n_p=np.array(V2.GEOM["NSEG"]), n_d=np.array(NNODE),
+        ver=np.array(ver),
+        # 附加（新模型特有）
+        theta=theta_a, phi=phi_a, F=F_a, tip_mm=tip_a, bend=bend_a,
+        nodes_mm=nodes_a, kappa=kappa_a, kappa_seg=kseg_a,
+        meta=np.array([NTHETA, NPHI, len(FLIST), NNODE, T0]))
     sz = os.path.getsize("model_v2/table.npz") / 1024
     print(f"\nsaved model_v2/table.npz  {sz:.0f} KB  "
           f"总用时 {time.time()-t0:.0f} s")
@@ -143,6 +189,8 @@ def main():
     print(f"  受拉根数分布  {np.bincount((dl_a > 1e-6).sum(1)).tolist()}")
     print(f"  末端 x 范围   {tip_a[:,0].min():.0f} … {tip_a[:,0].max():.0f} mm")
     print(f"  末端 z 范围   {tip_a[:,2].min():.0f} … {tip_a[:,2].max():.0f} mm")
+    print(f"  曲率范围      {kappa_a.min():.2f} … {kappa_a.max():.2f} 1/m")
+    print(f"  张力范围      {tau_a.min():.2f} … {tau_a.max():.2f} N")
     bad = err > 1.0
     if bad.any():
         print(f"  ⚠ {int(bad.sum())} 个点弯角未命中（>1°），最大 {err.max():.1f}°"
