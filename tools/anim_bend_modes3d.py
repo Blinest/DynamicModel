@@ -125,6 +125,12 @@ def build_mask(kvec):
     return nx, ny, mat
 
 
+def dl_of(kvec):
+    """6 路驱动丝位移：A 段丝累计前 6 段转角，B 段丝累计全部。"""
+    th = kvec * S12.SEG_LEN                # 每段转角 (rad)
+    return M.R_DISK * np.sum(th[:6]) * 1e3, M.R_DISK * np.sum(th) * 1e3
+
+
 def force_at(kap, s_m, theta_mm):
     alpha = M.ALPHA_A if s_m <= L_SEG else M.ALPHA_B
     A = (2.0e-3) * (1.5e-3)
@@ -180,12 +186,34 @@ def main():
 
     files = []
     for kf, deg in enumerate(np.linspace(0, THETA_MAX, NFRAME)):
-        fig = plt.figure(figsize=(14.5, 4.6))
+        fig = plt.figure(figsize=(18.0, 8.2))
+        gs = fig.add_gridspec(2, 4, height_ratios=[2.6, 1.0],
+                              hspace=0.16, wspace=0.06)
+        kv_all = {}
         for j, (m, nm) in enumerate(modes):
             kv = k12(m, deg) if deg > 0 else np.zeros(12)
+            kv_all[m] = kv
             nx, ny, mat = build_mask(kv)
-            ax = fig.add_subplot(1, 4, j + 1, projection="3d")
+            ax = fig.add_subplot(gs[0, j], projection="3d")
             render(ax, kv, nx, ny, mat, f"{nm}  θ={deg:.0f}°", lims)
+            # 下方：6 根丝的位移
+            axb = fig.add_subplot(gs[1, j])
+            dlA, dlB = dl_of(kv)
+            d6 = np.array([dlA, dlB, dlA, dlB, dlA, dlB])
+            cols = [RED if k in (0, 2, 4) else GREEN for k in range(6)]
+            axb.bar(range(6), d6, color=cols, alpha=0.92)
+            for kk in range(6):
+                axb.text(kk, d6[kk] + 0.15, f"{d6[kk]:.1f}", ha="center",
+                         fontsize=6.5,
+                         color=RED if kk in (0, 2, 4) else GREEN)
+            axb.set_ylim(0, 11)
+            axb.set_xticks(range(6))
+            axb.set_xticklabels([f"M{k+1}" for k in range(6)], fontsize=7)
+            axb.tick_params(labelsize=6)
+            axb.grid(alpha=0.25, ls=":", axis="y")
+            if j == 0:
+                axb.set_ylabel("ΔL (mm)", fontsize=8)
+            axb.set_title(f"{nm}：6 路位移（红=A 段/绿=B 段）", fontsize=7.5)
         fig.suptitle("四种弯曲模式的三维动图（红=受压/蓝=受拉/灰≈零）", fontsize=10)
         fig.tight_layout()
         fn = f"/tmp/_bm_{kf:02d}.png"
