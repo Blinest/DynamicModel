@@ -55,38 +55,29 @@ def main():
           f"z[{P[...,2].min():.0f},{P[...,2].max():.0f}] mm")
 
     fig = plt.figure(figsize=(15.5, 7.2))
-    # 左：按 θ 一次画一族色带；右：按 κ
-    for k, (name, cmap, cval, cbar) in enumerate([
-            ("弯角 θ (deg)", "turbo", th, "θ (deg)"),
-            ("局部曲率 κ (1/m)", "magma", kappa, "κ (1/m)")]):
+    NS = P.shape[1] - 1
+    segs = np.stack([P[:, :-1], P[:, 1:]], axis=2)      # (N, NS, 2, 3)
+    segs = segs.reshape(-1, 2, 3)                       # (N*NS, 2, 3)
+
+    for k, (name, cmap, cval, unit) in enumerate([
+            ("弯角 θ", "turbo", th, "θ (deg)"),
+            ("局部曲率 κ", "magma", kappa.mean(1), "κ (1/m)")]):
         ax = fig.add_subplot(1, 2, k + 1, projection="3d")
-        # 按 θ 分 8 档，每档一个颜色（比 1500 次 set_array 快得多）
-        if k == 0:
-            levels = np.linspace(0, np.percentile(th, 99), 9)
-            pick = [np.argmin(np.abs(th - lv)) for lv in levels]
-            for lv, i in zip(levels, pick):
-                ax.plot(P[i, :, 0], P[i, :, 1], P[i, :, 2],
-                        color=plt.cm.turbo(lv / levels[-1]), lw=1.6)
-            sm = plt.cm.ScalarMappable(cmap="turbo",
-                                       norm=plt.Normalize(0, levels[-1]))
-        else:
-            levels = np.linspace(0, np.percentile(kappa, 99), 9)
-            pick = [np.argmin(np.abs(kappa.max(1) - lv)) for lv in levels]
-            for lv, i in zip(levels, pick):
-                ax.plot(P[i, :, 0], P[i, :, 1], P[i, :, 2],
-                        color=plt.cm.magma(lv / levels[-1]), lw=1.6)
-            sm = plt.cm.ScalarMappable(cmap="magma",
-                                       norm=plt.Normalize(0, levels[-1]))
-        sm.set_array([])
-        fig.colorbar(sm, ax=ax, fraction=0.03, pad=0.08, label=cbar)
+        cnorm = plt.Normalize(np.percentile(cval, 2), np.percentile(cval, 98))
+        rgba = plt.get_cmap(cmap)(cnorm(cval))
+        cols = np.repeat(rgba, NS, axis=0)              # 每条曲线的色重复 NS 段
+        lc = Line3DCollection(segs, colors=cols, linewidths=0.35, alpha=0.45)
+        ax.add_collection3d(lc)
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=cnorm); sm.set_array([])
+        fig.colorbar(sm, ax=ax, fraction=0.03, pad=0.08, label=unit)
         ax.plot([0], [0], [0], "s", color="k", ms=8)
         ax.set_xlabel("x (mm)", fontsize=7)
         ax.set_ylabel("y (mm)", fontsize=7)
         ax.set_zlabel("z (mm)", fontsize=7)
         ax.tick_params(labelsize=6)
         ax.view_init(elev=16, azim=-60)
-        ax.set_title(name, fontsize=9, color=RED)
-    fig.suptitle("臂体曲线云图（1500 条中线，由 kS/kK 重建）", fontsize=10)
+        ax.set_title(f"{name}（全部 {n} 条）", fontsize=9, color=RED)
+    fig.suptitle(f"臂体曲线云图（全部 {n} 条中线，由 kS/kK 重建）", fontsize=10)
     fig.tight_layout()
     fig.savefig("fig_curves_cloud.png", dpi=150, bbox_inches="tight")
     print("saved fig_curves_cloud.png")
