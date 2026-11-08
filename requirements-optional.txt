@@ -1,0 +1,2 @@
+# 可选依赖（不装也能跑主流程）
+casadi>=3.6      # 用于 IPOPT 反求 / MPC；观察: pip install casadi
