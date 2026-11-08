@@ -186,7 +186,8 @@ def render(ax, kvec, nx, ny, mat, title, lims):
     ax.set_box_aspect((1, 1, 1), zoom=1.15)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
-    ax.set_title(title, fontsize=8.5, color=RED)
+    # 文字已按要求全部去除
+    del title
 
 
 FMAX_GL = 20.0
@@ -225,21 +226,12 @@ def main():
             d6 = dl6(kv)
             cols = [RED if k in (0, 2, 4) else GREEN for k in range(6)]
             axb.bar(range(6), d6, color=cols, alpha=0.92)
-            for kk in range(6):
-                axb.text(kk, d6[kk] + 0.15, f"{d6[kk]:.1f}", ha="center",
-                         fontsize=6.5,
-                         color=RED if kk in (0, 2, 4) else GREEN)
+
             axb.set_ylim(0, 11)
-            axb.set_xticks(range(6))
-            axb.set_xticklabels([f"M{k+1}" for k in range(6)], fontsize=7)
-            axb.tick_params(labelsize=6)
-            axb.grid(alpha=0.25, ls=":", axis="y")
-            if j == 0:
-                axb.set_ylabel("ΔL (mm)", fontsize=8)
-            n_pull = int((d6 > 1e-6).sum())
-            axb.set_title(f"{nm}：6 路收丝量（{n_pull} 根受拉 / "
-                          f"{6-n_pull} 根松弛）", fontsize=7.5)
-        fig.suptitle("四种弯曲模式的三维动图（红=受压/蓝=受拉/灰≈零）", fontsize=10)
+            axb.set_xticks([]); axb.set_yticks([])
+            for sp in axb.spines.values():
+                sp.set_visible(False)
+        # 总标题已去除
         fig.tight_layout()
         fn = f"/tmp/_bm_{kf:02d}.png"
         fig.savefig(fn, dpi=110)
