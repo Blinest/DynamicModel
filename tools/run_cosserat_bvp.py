@@ -10,6 +10,18 @@
   B) v2 等效力  EI=(0.01499+0.01266)/2=0.01383, EA=(6013+10568)/2=8291
      （完整模型只支持单段 EI，取两段平均做近似）
 """
+# ── 包路径引导（分层目录）────────────────────────────────────
+import os as _os, sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+for _d in ('geometry', 'stiffness', 'force', 'plot'):
+    _p = _os.path.join(_ROOT, _d)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+# ──────────────────────────────────────────────────────────────
+
+
 import os
 import sys
 import time

@@ -15,7 +15,19 @@
 ⚠ 采样点数 655 是"尝试次数"；40N 接受率约 65% ⇒ 预计 +425 个入库点。
 ⚠ 合并后表是 `--nodes` 节点的精简网格（tau/dL/p_tip/R_tip/res/x 不受影响）。
 """
+
 from __future__ import annotations
+
+# ── 包路径引导（分层目录）────────────────────────────────────
+import os as _os, sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+for _d in ('geometry', 'stiffness', 'force', 'plot'):
+    _p = _os.path.join(_ROOT, _d)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+# ──────────────────────────────────────────────────────────────
 
 import argparse
 import os

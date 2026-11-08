@@ -19,7 +19,19 @@
 ⚠ 二阶差分对噪声极敏感（噪声 ∝ 1/Δs²）。实测点建议：
   1) 节点间距 ≥ 20 mm；2) 坐标噪声 < 0.5 mm；3) 或多给几个点做平滑
 """
+
 from __future__ import annotations
+
+# ── 包路径引导（分层目录）────────────────────────────────────
+import os as _os, sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+for _d in ('geometry', 'stiffness', 'force', 'plot'):
+    _p = _os.path.join(_ROOT, _d)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+# ──────────────────────────────────────────────────────────────
 
 import sys
 import numpy as np

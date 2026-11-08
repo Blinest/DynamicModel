@@ -20,6 +20,18 @@ EI 与 μ 无法从一次绝对测量中分开（与"尖端力/EI 退化"同一�
 
 本脚本给出：Δτ 随 μ、Θ 的变化，以及在给定力传感器噪声下 μ 的辨识分辨率。
 """
+# ── 包路径引导（分层目录）────────────────────────────────────
+import os as _os, sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+for _d in ('geometry', 'stiffness', 'force', 'plot'):
+    _p = _os.path.join(_ROOT, _d)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+# ──────────────────────────────────────────────────────────────
+
+
 import numpy as np
 
 TAU_MEAN = 10.0      # N，丝内平均张力（预紧 + 差动）

@@ -21,7 +21,19 @@
     python tools/check_kappa_split.py --A 8 --phi 0   # 改幅值/方位
     python tools/check_kappa_split.py --selftest      # 断言比值 ≈ 2.00
 """
+
 from __future__ import annotations
+
+# ── 包路径引导（分层目录）────────────────────────────────────
+import os as _os, sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+for _d in ('geometry', 'stiffness', 'force', 'plot'):
+    _p = _os.path.join(_ROOT, _d)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+# ──────────────────────────────────────────────────────────────
 
 import argparse
 import os

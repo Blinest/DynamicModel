@@ -10,6 +10,18 @@ EI0 / k_rod 取自 `cosserat_lattice`（几何推 + 标定 c）；α 与 L_strut
 
 输出：与 v2 简化模型对拍（tip / ΔL）。
 """
+# ── 包路径引导（分层目录）────────────────────────────────────
+import os as _os, sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+for _d in ('geometry', 'stiffness', 'force', 'plot'):
+    _p = _os.path.join(_ROOT, _d)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+# ──────────────────────────────────────────────────────────────
+
+
 import os
 import sys
 import time

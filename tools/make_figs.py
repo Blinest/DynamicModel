@@ -8,6 +8,18 @@
 配色: #A34D4E 红棕 / #516CA3 蓝 / #8DAE7F 绿
 工况: 水平弯曲（方位 90°）与 垂直向上（方位 0°），水平安装 g=(-9.81,0,0)
 """
+# ── 包路径引导（分层目录）────────────────────────────────────
+import os as _os, sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+for _d in ('geometry', 'stiffness', 'force', 'plot'):
+    _p = _os.path.join(_ROOT, _d)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+# ──────────────────────────────────────────────────────────────
+
+
 import os
 import sys
 

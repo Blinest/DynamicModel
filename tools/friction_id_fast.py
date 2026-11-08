@@ -18,6 +18,18 @@
 本脚本：用已知 (μ_j, c_j) 造连续扫描数据（20 Hz、0.05 N 噪声），
 跑"上下支配对 → 斜率 → 分离 μ/c"，报精度与耗时。
 """
+# ── 包路径引导（分层目录）────────────────────────────────────
+import os as _os, sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+for _d in ('geometry', 'stiffness', 'force', 'plot'):
+    _p = _os.path.join(_ROOT, _d)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+# ──────────────────────────────────────────────────────────────
+
+
 import numpy as np
 
 NWIRE = 6

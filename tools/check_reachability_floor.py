@@ -19,7 +19,19 @@ box-QP 真值用**穷举 3^6 = 729 个活跃集 + KKT 校验**求得 (6 维下�
 
 跑: python tools/check_reachability_floor.py   (只需 numpy)
 """
+
 from __future__ import annotations
+
+# ── 包路径引导（分层目录）────────────────────────────────────
+import os as _os, sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+for _d in ('geometry', 'stiffness', 'force', 'plot'):
+    _p = _os.path.join(_ROOT, _d)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
+if _ROOT not in _sys.path:
+    _sys.path.insert(0, _ROOT)
+# ──────────────────────────────────────────────────────────────
 
 import itertools
 import sys
