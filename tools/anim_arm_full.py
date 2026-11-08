@@ -28,12 +28,11 @@ def compute_lims():
     """用 180° 帧的骨架包围盒作为全帧固定视野。"""
     ss, kf = M.kappa_profile(np.pi)
     sg, P, Rm = M.build_frames(kf, ss)
-    pmin, pmax = P.min(0), P.max(0)
-    ctr = 0.5 * (pmin + pmax)
-    half = 0.5 * float(np.max(pmax - pmin)) + 0.032   # 留足边距，180° 卷回时不切边
-    return ((ctr[0] - half, ctr[0] + half),
-            (ctr[1] - half, ctr[1] + half),
-            (ctr[2] - half, ctr[2] + half))
+    # 画面中心放在**基座**（p(0)=0）；half 取臂长 + 边距，保证整臂仍在画内
+    half = float(L_TOT * 1e-3) + 0.032 if 'fig_arm_full' in __name__ else 0.432
+    # 统一用 0.432 m（=0.4 臂长 + 0.032 边距）
+    half = 0.432
+    return ((-half, half), (-half, half), (-half, half))
 
 
 def render_fixed(ax, theta_total, nx, ny, mat, title, lims):

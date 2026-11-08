@@ -138,12 +138,11 @@ def render(ax, theta_total, nx, ny, mat, title):
     pc = Poly3DCollection(quads, facecolor=RED, edgecolor="none", linewidth=0,
                           antialiased=True)
     ax.add_collection3d(pc)
-    pmin, pmax = P.min(0), P.max(0)
-    ctr = 0.5 * (pmin + pmax)
-    half = 0.5 * float(np.max(pmax - pmin)) + 0.032   # 留足边距，180° 卷回时不切边
-    ax.set_xlim(ctr[0] - half, ctr[0] + half)
-    ax.set_ylim(ctr[1] - half, ctr[1] + half)
-    ax.set_zlim(ctr[2] - half, ctr[2] + half)
+    # 画面中心放在**基座**（p(0)=0）；half = 臂长 0.4 + 边距 0.032，整臂仍在画内
+    half = 0.432
+    ax.set_xlim(-half, half)
+    ax.set_ylim(-half, half)
+    ax.set_zlim(-half, half)
     ax.set_box_aspect((1, 1, 1), zoom=1.12)   # 相机后拉，保证整臂在画面内
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
