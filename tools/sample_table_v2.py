@@ -81,10 +81,18 @@ def dl_from_out(m, tau, o):
     km = o["kappa"][:, :2].sum(0)
     phi_b = (np.arctan2(-km[0], km[1])
              if np.any(np.abs(km) > 1e-12) else 0.0)
+    # 轴向压缩（耦合项）：ε = −Στ/EA，A 段丝半跨、B 段丝全跨
+    eps = 0.0
+    if getattr(m, "axial", False):
+        eps = (-float(np.sum(tau)) / float(m.EA.mean()))
+    half_len = m.g["L_total"] * 0.5
     out = np.zeros(6)
     for w, ps in enumerate(m.psi):
-        span = phiA if w % 2 == 0 else phiB
-        out[w] = max(0.0, m.g["r_disk"] * span * np.cos(ps - phi_b)) * 1e3
+        isA = (w % 2 == 0)
+        span = phiA if isA else phiB
+        dL = -m.g["r_disk"] * span * np.cos(ps - phi_b)
+        dL += eps * (half_len if isA else m.g["L_total"])   # eps<0 => dL 更负 => 收得更多
+        out[w] = max(0.0, -dL) * 1e3
     return out
 
 
