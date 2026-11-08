@@ -142,7 +142,9 @@ def render(ax, theta_total, nx, ny, mat, title):
     ax.set_xlim(-0.34, 0.34)
     ax.set_ylim(-0.34, 0.34)
     ax.set_zlim(-0.02, 0.45)
-    ax.set_box_aspect((1, 1, 1), zoom=1.12)   # 相机后拉，保证整臂在画面内
+    dx = 0.34 * 2; dy = 0.34 * 2; dz = 0.45 + 0.02
+    m = max(dx, dy, dz)
+    ax.set_box_aspect((dx / m, dy / m, dz / m), zoom=1.05)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
     ax.set_title(title, fontsize=9, color=RED)

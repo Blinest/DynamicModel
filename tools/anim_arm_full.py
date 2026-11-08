@@ -25,14 +25,20 @@ NFRAME = 10
 
 
 def compute_lims():
-    """用 180° 帧的骨架包围盒作为全帧固定视野。"""
-    ss, kf = M.kappa_profile(np.pi)
-    sg, P, Rm = M.build_frames(kf, ss)
-    # 画面中心放在**基座**（p(0)=0）；half 取臂长 + 边距，保证整臂仍在画内
-    half = float(L_TOT * 1e-3) + 0.032 if 'fig_arm_full' in __name__ else 0.432
-    # 统一用 0.432 m（=0.4 臂长 + 0.032 边距）
-    half = 0.432
-    return ((-half, half), (-half, half), (-half, half))
+    """固定视野：**基座贴底**。
+
+    z 取 [-0.02, 0.45]（基座在下方 20 mm 处），x/y 取横向可达 ±0.34；
+    另给 box_aspect 按数据范围成比例，否则 (1,1,1) 会把 z 拉伸、基座又跑到中间。
+    """
+    return ((-0.34, 0.34), (-0.34, 0.34), (-0.02, 0.45))
+
+
+def aspect_of(lims):
+    dx = lims[0][1] - lims[0][0]
+    dy = lims[1][1] - lims[1][0]
+    dz = lims[2][1] - lims[2][0]
+    m = max(dx, dy, dz)
+    return (dx / m, dy / m, dz / m)
 
 
 def render_fixed(ax, theta_total, nx, ny, mat, title, lims):
@@ -53,7 +59,7 @@ def render_fixed(ax, theta_total, nx, ny, mat, title, lims):
                           linewidth=0, antialiased=True)
     ax.add_collection3d(pc)
     ax.set_xlim(*lims[0]); ax.set_ylim(*lims[1]); ax.set_zlim(*lims[2])
-    ax.set_box_aspect((1, 1, 1), zoom=1.12)   # 相机后拉，保证整臂在画面内
+    ax.set_box_aspect(aspect_of(lims), zoom=1.05)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
     ax.set_title(title, fontsize=9, color=F.RED)
