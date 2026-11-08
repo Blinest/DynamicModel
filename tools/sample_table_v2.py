@@ -1,0 +1,145 @@
+# -*- coding: utf-8 -*-
+"""sample_table_v2.py — 用 v2 模型采 3000 个点，建控制用的查表
+
+采样设计（3000 = 50 × 30 × 2）
+    θ（弯角）  : 0…180°，50 个等分
+    φ（方位）  : 0…348°，30 个等分（12° 步长）
+    F_tip      : {0, 20 mN} 两档（垂直于弯曲平面的横向力）
+
+每个点记录
+    tau[6]        解出的六路张力（含预紧 T0，允许个别丝到 0 = 松弛）
+    tip[3]        末端位置 (mm)
+    bend          实际达到的弯角 (deg，用于核对)
+    dl[6]         六路收丝量 (mm，只能受拉)
+    nodes[61,3]   中线 61 节点 (mm) —— 与 model/ 表的节点数一致
+
+求解方式：给 (θ, φ)，对幅值 A 做二分（τ_j = max(0, T0 + A·cos(ψ_j−φ))），
+使实际弯角命中 θ。二分对 A 单调，30 次足够。
+
+输出 model_v2/table.npz
+"""
+import os
+import sys
+import time
+
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import tdcr_model_v2 as V2   # noqa: E402
+
+NTHETA = 50
+NPHI = 30
+FLIST = (0.0, 0.020)
+NNODE = 61
+T0 = 10.0
+
+
+def resample(p, n=NNODE):
+    """把变步长的中线重采样到 n 个等弧长节点。"""
+    d = np.linalg.norm(np.diff(p, axis=0), axis=1)
+    s = np.concatenate([[0.0], np.cumsum(d)])
+    if s[-1] <= 0:
+        return np.repeat(p[:1], n, axis=0)
+    su = np.linspace(0, s[-1], n)
+    return np.column_stack([np.interp(su, s, p[:, k]) for k in range(3)])
+
+
+def solve_A(m, theta_deg, phi_deg, F_tip, it=14):
+    """求幅值 A 使弯角命中 theta_deg。
+
+    全丝受拉时 M = 3·r·A ⇒ Θ ∝ A，闭式给初值：
+        A0 = Θ / (3·r·(L1/EI1 + L2/EI2))
+    再用少量二分修正（T0 截断与松弛会带来偏差）。
+    """
+    psi = np.radians(V2.GEOM["psi_deg"])
+    ph = np.radians(phi_deg)
+    Ft = np.array([0.0, -F_tip, 0.0]) if F_tip else None
+    L = m.g["L_total"]; half = m.N // 2
+    comp = (half * m.ds) / m.EI[0] + (m.N - half) * m.ds / m.EI[-1]
+    A0 = np.radians(theta_deg) / (3.0 * m.g["r_disk"] * comp)
+    lo, hi = max(0.0, 0.4 * A0), max(1e-6, 2.2 * A0)
+    best = (None, None)
+    for _ in range(it):
+        A = 0.5 * (lo + hi)
+        tau = np.maximum(0.0, T0 + A * np.cos(psi - ph))
+        b = m.bend_angle(tau, F_tip=Ft)
+        best = (tau, b)
+        if b < theta_deg:
+            lo = A
+        else:
+            hi = A
+        if abs(b - theta_deg) < 0.15:
+            break
+    return best
+
+
+def dl_from_out(m, tau, o):
+    """复用 solve 的输出直接算 6 路收丝，避免重复积分。"""
+    phi = o["phi"]
+    phiA, phiB = phi[m.N // 2], phi[-1]
+    km = o["kappa"][:, :2].sum(0)
+    phi_b = (np.arctan2(-km[0], km[1])
+             if np.any(np.abs(km) > 1e-12) else 0.0)
+    out = np.zeros(6)
+    for w, ps in enumerate(m.psi):
+        span = phiA if w % 2 == 0 else phiB
+        out[w] = max(0.0, m.g["r_disk"] * span * np.cos(ps - phi_b)) * 1e3
+    return out
+
+
+def main():
+    m = V2.TdcrModelV2(T0=T0, n_sub=2)   # 表格用粗积分
+    thetas = np.linspace(0.0, 180.0, NTHETA)
+    phis = np.linspace(0.0, 348.0, NPHI)
+    n = NTHETA * NPHI * len(FLIST)
+    print(f"采点：{NTHETA} θ × {NPHI} φ × {len(FLIST)} F = {n} 点")
+
+    theta_a = np.zeros(n); phi_a = np.zeros(n); F_a = np.zeros(n)
+    tau_a = np.zeros((n, 6)); tip_a = np.zeros((n, 3))
+    bend_a = np.zeros(n); dl_a = np.zeros((n, 6))
+    nodes_a = np.zeros((n, NNODE, 3))
+
+    k = 0
+    t0 = time.time()
+    for th in thetas:
+        for ph in phis:
+            for F in FLIST:
+                tau, b = solve_A(m, th, ph, F)
+                o = m.solve(tau, F_tip=(np.array([0.0, -F, 0.0]) if F else None))
+                theta_a[k] = th; phi_a[k] = ph; F_a[k] = F
+                tau_a[k] = tau
+                tip_a[k] = o["p"][-1] * 1e3
+                bend_a[k] = b
+                dl_a[k] = dl_from_out(m, tau, o)
+                nodes_a[k] = resample(o["p"]) * 1e3
+                k += 1
+        el = time.time() - t0
+        print(f"  θ={th:6.1f}°  完成 {k:4d}/{n}  用时 {el:5.1f}s "
+              f"（预计总 {el/k*n:5.0f}s）", flush=True)
+
+    os.makedirs("model_v2", exist_ok=True)
+    np.savez_compressed("model_v2/table.npz",
+                        theta=theta_a, phi=phi_a, F=F_a, tau=tau_a,
+                        tip=tip_a, bend=bend_a, dl=dl_a, nodes=nodes_a,
+                        meta=np.array([NTHETA, NPHI, len(FLIST), NNODE, T0]))
+    sz = os.path.getsize("model_v2/table.npz") / 1024
+    print(f"\nsaved model_v2/table.npz  {sz:.0f} KB  "
+          f"总用时 {time.time()-t0:.0f} s")
+
+    # 质量核对
+    err = np.abs(bend_a - theta_a)
+    print(f"\n核对：")
+    print(f"  弯角命中误差  max {err.max():.2f}°  mean {err.mean():.3f}°")
+    print(f"  收丝量范围    {dl_a.min():.2f} … {dl_a.max():.2f} mm")
+    print(f"  受拉根数分布  {np.bincount((dl_a > 1e-6).sum(1)).tolist()}")
+    print(f"  末端 x 范围   {tip_a[:,0].min():.0f} … {tip_a[:,0].max():.0f} mm")
+    print(f"  末端 z 范围   {tip_a[:,2].min():.0f} … {tip_a[:,2].max():.0f} mm")
+    bad = err > 1.0
+    if bad.any():
+        print(f"  ⚠ {int(bad.sum())} 个点弯角未命中（>1°），最大 {err.max():.1f}°"
+              f" —— 多为 θ 接近 180° 时饱和")
+
+
+if __name__ == "__main__":
+    main()
