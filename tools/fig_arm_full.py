@@ -130,7 +130,9 @@ def axial_force(theta_mm, s_mm, ss, kf):
     a_deg = (M.ALPHA_A if s_mm <= L_SEG else M.ALPHA_B)
     w_mm = 2.0
     A = (w_mm * 1e-3) * (1.5e-3)                          # 筋截面积 m²
-    eps = kap * M.R_OUT * np.cos(theta_mm / R_OUT_MM)      # 膜应变
+    # ⚠ 符号：build_frames 里绕 +y 正转 ⇒ 切线由 +z 偏 +x ⇒ **+x 是凹侧(内侧)**
+    #   ε = −κ·R·cosθ  ⇒ θ=0 处受压(F<0)、θ=180° 处受拉
+    eps = -kap * M.R_OUT * np.cos(theta_mm / R_OUT_MM)
     return M_E_MOD * (eps * np.sin(np.radians(a_deg))) * A
 
 
@@ -153,14 +155,16 @@ def render(ax, theta_total, nx, ny, mat, title):
             if np.isfinite(np.asarray(q)).all()]
     quads = [quads[i] for i in keep]
     comps = np.array([comps[i] for i in keep])
-    fmax = max(np.abs(comps).max(), 1e-9)
+    # 归一化用 95 分位：绝大多数格子的 |F| 很小，直接用 max 会让中间一片接近浅色
+    fmax = max(np.percentile(np.abs(comps), 95), 1e-9)
     pc = Poly3DCollection(quads, edgecolor="none", linewidth=0, antialiased=True)
     import matplotlib.cm as cm
     # 发散映射：F/Fmax = +1(受拉最大) -> coolwarm(0)=深蓝
     #           F/Fmax = -1(受压最大) -> coolwarm(1)=深红
     #           F ≈ 0                -> coolwarm(0.5)=浅色
     t = np.clip(comps / fmax, -1.0, 1.0)
-    pc.set_facecolor(cm.coolwarm((1.0 - t) / 2.0))
+    # seismic 对比度比 coolwarm 高：深红/深蓝更分明
+    pc.set_facecolor(cm.seismic((1.0 - t) / 2.0))
     ax.add_collection3d(pc)
     half = 0.432
     ax.set_xlim(-0.34, 0.34)
