@@ -44,12 +44,23 @@ G_MOD = E_MOD / (2 * (1 + NU))
 L = 0.4
 L1 = 0.2
 
-# 两段变体：(α, 材料率 f)
-SEG = [dict(alpha=34.0, frac=0.33, tag="段1"),
-       dict(alpha=20.0, frac=0.58, tag="段2")]
+# 两段变体：(α, 筋宽 w, 材料率 f)
+# 材料率的参考点是 w=1.5mm 时的网格统计值；改 w 时按 w/1.5 一阶缩放
+W_REF, F_REF = 1.5, dict(seg1=0.33, seg2=0.58)
+SEG = [dict(alpha=34.0, w=2.0, tag="段1"),
+       dict(alpha=20.0, w=1.5, tag="段2")]
+
+
+def frac_of(seg, key):
+    """材料率随筋宽一阶缩放（参考 w=1.5mm 的网格统计值）。"""
+    return min(0.95, F_REF[key] * seg["w"] / W_REF)
+
+
+for _k, _s in (("seg1", SEG[0]), ("seg2", SEG[1])):
+    _s["frac"] = frac_of(_s, _k)
 
 # 标定常数（c 由实测 EI 反解，见 calibrate_c()）
-C_BEND = None
+C_BEND = 0.4367        # 在 w=1.5mm 时由实测 EI 标定；属于工艺常数，不随 w 重标
 C_EA = 1.0
 C_GJ = 1.0
 
@@ -78,17 +89,18 @@ def EI_raw(alpha_deg, frac):
     return E_MOD * I_solid() * frac * orient(alpha_deg)
 
 
-def calibrate_c():
-    """用实测 EI 反解标定常数（对两段取平均）。"""
-    global C_BEND
-    raws = [EI_raw(s["alpha"], s["frac"]) for s in SEG]
-    C_BEND = EI_MEAS / np.mean(raws)
-    return C_BEND
+def calibrate_c(w_ref=1.5):
+    """**参考用**：在 w=w_ref 时由实测 EI 反解 c（工艺常数，之后固定不再重标）。"""
+    raws = []
+    for s, key in ((SEG[0], "seg1"), (SEG[1], "seg2")):
+        f = F_REF[key] * w_ref / W_REF
+        raws.append(EI_raw(s["alpha"], f))
+    return EI_MEAS / np.mean(raws)
 
 
 def stiffness(seg=None, c=None):
     """返回 (EI, EA, GJ)，两段可分开算。"""
-    c = calibrate_c() if c is None else c
+    c = C_BEND if c is None else c
     out = []
     for s in (SEG if seg is None else [seg]):
         EI = c * EI_raw(s["alpha"], s["frac"])
@@ -115,12 +127,13 @@ def bend_angle_from_dl(dl_ratio_theta, seg_K):
 
 
 if __name__ == "__main__":
-    c = calibrate_c()
+    c = C_BEND
     print("=== 由几何推刚度 ===")
     print(f"  I_solid={I_solid():.4e} m⁴  A_solid={A_solid():.4e} m²  "
           f"J_solid={J_solid():.4e} m⁴")
     print(f"  E·I_solid = {E_MOD*I_solid():.4f} N·m²（无孔管）")
-    print(f"  标定常数 c = {c:.4f}（由实测 EI={EI_MEAS} 反解）\n")
+    print(f"  标定常数 c = {c:.4f}（在 w=1.5mm 时由实测 EI={EI_MEAS} 标定，固定）")
+    print(f"  参考：若在 w=1.5 重标，c 应为 {calibrate_c(1.5):.4f}\n")
     print("%4s %6s %6s %9s %10s %10s %10s" %
           ("段", "α°", "材料率", "取向因子", "EI", "EA", "GJ"))
     for s, k in zip(SEG, stiffness()):
