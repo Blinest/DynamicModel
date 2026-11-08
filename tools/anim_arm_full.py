@@ -62,7 +62,7 @@ def render_fixed(ax, theta_total, nx, ny, mat, title, lims):
 def main():
     LIMS = compute_lims()
     files = []
-    for k, deg in enumerate(np.linspace(0, 180, NFRAME)):
+    for k, deg in enumerate(np.linspace(0, 150, NFRAME)):   # 180° 时末端卷到基座下方，基座无法置底
         th = np.radians(deg)
         nx, ny, mat = F.build_mask(th)
         fig = plt.figure(figsize=(6.6, 6.4))
