@@ -43,8 +43,17 @@ def aspect_of(lims):
 
 # ── 受力色标：深蓝(受拉) → 浅灰(不受力) → 深红(受压) ──────────
 from matplotlib.colors import LinearSegmentedColormap as _LSC
-CMAP_F = _LSC.from_list("fg", ["#08306b", "#d9d9d9", "#67000d"])
-GRAY_F = (0.85, 0.85, 0.85, 1.0)
+# 6 段渐变：深蓝 → 浅蓝 → 近白 → 近白 → 浅红 → 深红
+#   => 力小 = 浅蓝/浅红，力大 = 深蓝/深红，零力 = 近白
+CMAP_F = _LSC.from_list("fg", [
+    "#08306b",   # 0.0  受拉最大  深蓝
+    "#5b8fc9",   # 0.2  受拉中等  浅蓝
+    "#eef3f9",   # 0.4  力很小    近白(偏蓝)
+    "#fbeaea",   # 0.6  力很小    近白(偏红)
+    "#cf5a56",   # 0.8  受压中等  浅红
+    "#67000d",   # 1.0  受压最大  深红
+])
+GRAY_F = (0.88, 0.88, 0.88, 1.0)
 F_DEAD = 0.02          # |F|/FMAX < 2% 视为不受力 => 浅灰
 
 
@@ -112,10 +121,18 @@ def main():
     for k, deg in enumerate(np.linspace(0, 150, NFRAME)):   # 180° 时末端卷到基座下方，基座无法置底
         th = np.radians(deg)
         nx, ny, mat = F.build_mask(th)
-        fig = plt.figure(figsize=(6.6, 6.4))
+        fig = plt.figure(figsize=(7.6, 6.4))
         ax = fig.add_subplot(111, projection="3d")
         render_fixed(ax, th, nx, ny, mat,
                      f"全长 400 mm   θ={deg:.0f}°", LIMS, FMAX)
+        # 右侧力云图色标（全帧同一量程 FMAX）
+        from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import Normalize
+        sm = ScalarMappable(cmap=CMAP_F, norm=Normalize(vmin=-FMAX, vmax=FMAX))
+        sm.set_array([])
+        cb = fig.colorbar(sm, ax=ax, fraction=0.035, pad=0.02, shrink=0.72)
+        cb.set_label("斜撑轴力 F (N)  负=受压/正=受拉", fontsize=8)
+        cb.ax.tick_params(labelsize=7)
         fig.tight_layout()
         fn = f"/tmp/_af_{k:02d}.png"
         fig.savefig(fn, dpi=130)

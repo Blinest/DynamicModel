@@ -125,8 +125,17 @@ def build_mask(theta_total):
 
 # ── 受力色标：深蓝(受拉) → 浅灰(不受力) → 深红(受压) ──────────
 from matplotlib.colors import LinearSegmentedColormap as _LSC
-CMAP_F = _LSC.from_list("fg", ["#08306b", "#d9d9d9", "#67000d"])
-GRAY_F = (0.85, 0.85, 0.85, 1.0)
+# 6 段渐变：深蓝 → 浅蓝 → 近白 → 近白 → 浅红 → 深红
+#   => 力小 = 浅蓝/浅红，力大 = 深蓝/深红，零力 = 近白
+CMAP_F = _LSC.from_list("fg", [
+    "#08306b",   # 0.0  受拉最大  深蓝
+    "#5b8fc9",   # 0.2  受拉中等  浅蓝
+    "#eef3f9",   # 0.4  力很小    近白(偏蓝)
+    "#fbeaea",   # 0.6  力很小    近白(偏红)
+    "#cf5a56",   # 0.8  受压中等  浅红
+    "#67000d",   # 1.0  受压最大  深红
+])
+GRAY_F = (0.88, 0.88, 0.88, 1.0)
 F_DEAD = 0.02          # |F|/FMAX < 2% 视为不受力 => 浅灰
 
 
@@ -192,13 +201,26 @@ def render(ax, theta_total, nx, ny, mat, title):
     return fmax
 
 
+def add_cbar(fig, ax, fmax):
+    """右侧力云图色标：−Fmax(深红/受压) → 0(近白) → +Fmax(深蓝/受拉)。"""
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    sm = ScalarMappable(cmap=CMAP_F, norm=Normalize(vmin=-fmax, vmax=fmax))
+    sm.set_array([])
+    cb = fig.colorbar(sm, ax=ax, fraction=0.035, pad=0.02, shrink=0.72)
+    cb.set_label("斜撑轴力 F (N)   负=受压 / 正=受拉", fontsize=8)
+    cb.ax.tick_params(labelsize=7)
+    return cb
+
+
 def main():
-    fig = plt.figure(figsize=(12.5, 6.4))
+    fig = plt.figure(figsize=(13.5, 6.4))
     for k, th in enumerate((0.0, np.pi)):
         nx, ny, mat = build_mask(th)
         ax = fig.add_subplot(1, 2, k + 1, projection="3d")
-        render(ax, th, nx, ny, mat,
-               "直臂 0°" if k == 0 else "180° 弯曲（红=压缩大 / 蓝=力小）")
+        fm = render(ax, th, nx, ny, mat,
+                    "直臂 0°" if k == 0 else "180° 弯曲")
+        add_cbar(fig, ax, max(fm, 1e-9))
     fig.suptitle("完整臂形（全长 400 mm，掩膜法；材料率含圆角与段界厚壁筒）",
                  fontsize=10)
     fig.tight_layout()
