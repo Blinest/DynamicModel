@@ -118,7 +118,7 @@ def build_frame(theta_total):
     return nx, ny, mat, sg, P, Rm, rows
 
 
-def render(ax, nx, ny, mat, sg, P, Rm, theta_total):
+def render(ax, nx, ny, mat, sg, P, Rm, theta_total, lims=None):
     ax.clear()
     r_o = M.R_OUT + 0.03e-3
     quads = []
@@ -133,12 +133,15 @@ def render(ax, nx, ny, mat, sg, P, Rm, theta_total):
     pc = Poly3DCollection(quads, facecolor=RED, edgecolor="none", linewidth=0,
                           antialiased=True)
     ax.add_collection3d(pc)
-    pmin, pmax = P.min(0), P.max(0)
-    ctr = 0.5 * (pmin + pmax)
-    half = 0.5 * float(np.max(pmax - pmin)) + 0.014
-    ax.set_xlim(ctr[0] - half, ctr[0] + half)
-    ax.set_ylim(ctr[1] - half, ctr[1] + half)
-    ax.set_zlim(min(0, pmin[2]) - 0.01, S_WIN * 1e-3 + 0.01)
+    if lims is None:
+        pmin, pmax = P.min(0), P.max(0)
+        ctr = 0.5 * (pmin + pmax)
+        half = 0.5 * float(np.max(pmax - pmin)) + 0.014
+        lims = ((ctr[0] - half, ctr[0] + half),
+                (ctr[1] - half, ctr[1] + half),
+                (min(0.0, pmin[2]) - 0.01, S_WIN * 1e-3 + 0.01))
+    # 所有帧共用同一套坐标范围（否则相机逐帧跟着包围盒动，看起来画面在飘）
+    ax.set_xlim(*lims[0]); ax.set_ylim(*lims[1]); ax.set_zlim(*lims[2])
     ax.set_box_aspect((1, 1, 1))
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=16, azim=-62)
@@ -146,14 +149,26 @@ def render(ax, nx, ny, mat, sg, P, Rm, theta_total):
                  f"材料 {mat.mean()*100:.0f}%", fontsize=9)
 
 
+def compute_lims():
+    """取最大弯曲(180°)那一帧的包围盒，全帧共用。"""
+    nx, ny, mat, sg, P, Rm, rows = build_frame(np.pi)
+    pmin, pmax = P.min(0), P.max(0)
+    ctr = 0.5 * (pmin + pmax)
+    half = 0.5 * float(np.max(pmax - pmin)) + 0.014
+    return ((ctr[0] - half, ctr[0] + half),
+            (ctr[1] - half, ctr[1] + half),
+            (min(0.0, pmin[2]) - 0.01, S_WIN * 1e-3 + 0.01))
+
+
 def main():
     files = []
+    LIMS = compute_lims()
     for k, deg in enumerate(np.linspace(0, 180, NFRAME)):
         th = np.radians(deg)
         nx, ny, mat, sg, P, Rm, rows = build_frame(th)
         fig = plt.figure(figsize=(6.6, 6.0))
         ax = fig.add_subplot(111, projection="3d")
-        render(ax, nx, ny, mat, sg, P, Rm, th)
+        render(ax, nx, ny, mat, sg, P, Rm, th, LIMS)
         fig.tight_layout()
         fn = f"/tmp/_m3d_{k:02d}.png"
         fig.savefig(fn, dpi=130)
