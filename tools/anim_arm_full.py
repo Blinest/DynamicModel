@@ -30,7 +30,7 @@ def compute_lims():
     sg, P, Rm = M.build_frames(kf, ss)
     pmin, pmax = P.min(0), P.max(0)
     ctr = 0.5 * (pmin + pmax)
-    half = 0.5 * float(np.max(pmax - pmin)) + 0.015
+    half = 0.5 * float(np.max(pmax - pmin)) + 0.032   # 留足边距，180° 卷回时不切边
     return ((ctr[0] - half, ctr[0] + half),
             (ctr[1] - half, ctr[1] + half),
             (ctr[2] - half, ctr[2] + half))
@@ -54,7 +54,7 @@ def render_fixed(ax, theta_total, nx, ny, mat, title, lims):
                           linewidth=0, antialiased=True)
     ax.add_collection3d(pc)
     ax.set_xlim(*lims[0]); ax.set_ylim(*lims[1]); ax.set_zlim(*lims[2])
-    ax.set_box_aspect((1, 1, 1))
+    ax.set_box_aspect((1, 1, 1), zoom=1.12)   # 相机后拉，保证整臂在画面内
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
     ax.set_title(title, fontsize=9, color=F.RED)
