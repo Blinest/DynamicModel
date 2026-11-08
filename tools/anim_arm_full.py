@@ -41,10 +41,32 @@ def aspect_of(lims):
     return (dx / m, dy / m, dz / m)
 
 
-def render_fixed(ax, theta_total, nx, ny, mat, title, lims):
+def axial_force(theta_mm, s_mm, ss, kf):
+    """该处斜撑的带符号轴力 (N)：F>0 受拉、F<0 受压（+x 为凹侧，ε=-κRcosθ）。"""
+    kap = float(np.interp(s_mm * 1e-3, ss, kf))
+    a_deg = M.ALPHA_A if s_mm <= F.L_SEG else M.ALPHA_B
+    A = (2.0e-3) * (1.5e-3)
+    eps = -kap * M.R_OUT * np.cos(theta_mm / F.R_OUT_MM)
+    return 2.0e8 * (eps * np.sin(np.radians(a_deg))) * A
+
+
+def probe_fmax(theta_total):
+    """用目标角最大的一帧取 95 分位力幅，作为**全帧共用**的色标上限。"""
+    nx, ny, mat = F.build_mask(theta_total)
+    ss, kf = M.kappa_profile(theta_total)
+    vals = []
+    for k in np.where(mat.ravel())[0]:
+        ix, iy = k % nx, k // nx
+        vals.append(axial_force((ix + 0.5) * F.DS, (iy + 0.5) * F.DS, ss, kf))
+    return max(np.percentile(np.abs(vals), 95), 1e-9)
+
+
+def render_fixed(ax, theta_total, nx, ny, mat, title, lims, fmax):
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    import matplotlib.cm as cm
     ss, kf = M.kappa_profile(theta_total)
     sg, P, Rm = M.build_frames(kf, ss)
-    quads = []
+    quads, comps = [], []
     for k in np.where(mat.ravel())[0]:
         ix, iy = k % nx, k // nx
         x0, x1 = ix * F.DS, (ix + 1) * F.DS
@@ -53,20 +75,26 @@ def render_fixed(ax, theta_total, nx, ny, mat, title, lims):
                          M.R_OUT + 0.03e-3)
                for xx, yy in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
         quads.append(pts)
-    quads = [q for q in quads if np.isfinite(np.asarray(q)).all()]
-    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-    pc = Poly3DCollection(quads, facecolor=F.RED, edgecolor="none",
-                          linewidth=0, antialiased=True)
+        comps.append(axial_force(0.5 * (x0 + x1), 0.5 * (y0 + y1), ss, kf))
+    keep = [i for i, q in enumerate(quads) if np.isfinite(np.asarray(q)).all()]
+    quads = [quads[i] for i in keep]
+    comps = np.array([comps[i] for i in keep])
+    pc = Poly3DCollection(quads, edgecolor="none", linewidth=0, antialiased=True)
+    t = np.clip(comps / fmax, -1.0, 1.0)      # +1 受拉最大(深蓝) / −1 受压最大(深红)
+    pc.set_facecolor(cm.seismic((1.0 - t) / 2.0))
     ax.add_collection3d(pc)
     ax.set_xlim(*lims[0]); ax.set_ylim(*lims[1]); ax.set_zlim(*lims[2])
     ax.set_box_aspect(aspect_of(lims), zoom=1.05)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
-    ax.set_title(title, fontsize=9, color=F.RED)
+    ax.set_title(f"{title}   峰值 ±{np.abs(comps).max():.1f} N "
+                 f"（深红=受压 / 深蓝=受拉）", fontsize=9, color=F.RED)
 
 
 def main():
     LIMS = compute_lims()
+    FMAX = probe_fmax(np.radians(150))
+    print(f'  色标上限（150° 帧的 95 分位）: ±{FMAX:.2f} N')
     files = []
     for k, deg in enumerate(np.linspace(0, 150, NFRAME)):   # 180° 时末端卷到基座下方，基座无法置底
         th = np.radians(deg)
@@ -74,8 +102,7 @@ def main():
         fig = plt.figure(figsize=(6.6, 6.4))
         ax = fig.add_subplot(111, projection="3d")
         render_fixed(ax, th, nx, ny, mat,
-                     f"全长 400 mm   θ={deg:.0f}°   "
-                     f"材料 {mat.mean()*100:.0f}%", LIMS)
+                     f"全长 400 mm   θ={deg:.0f}°", LIMS, FMAX)
         fig.tight_layout()
         fn = f"/tmp/_af_{k:02d}.png"
         fig.savefig(fn, dpi=130)
