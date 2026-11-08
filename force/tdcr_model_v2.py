@@ -87,6 +87,12 @@ class TdcrModelV2:
         self.GJ = np.asarray(stiffness["GJ"], float)
         self.psi = np.radians(g["psi_deg"])
 
+    def _active_mask(self, s):
+        """锚点在该截面之后的丝（A 段丝锚 200mm、B 段丝锚 400mm）。"""
+        anchor = np.where(np.arange(6) % 2 == 0, self.g["L_total"] * 0.5,
+                          self.g["L_total"])
+        return (anchor > s + 1e-12).astype(float)
+
     # ── 内部：张力分布 ───────────────────────────────────────────
     def _tau_of_s(self, tau, phi_accum):
         """Capstan：τ_j(s) = τ_j·exp(−μ·b·φ)，φ 为累计转折角。"""
@@ -107,12 +113,15 @@ class TdcrModelV2:
             for _ in range(self.n_sub):
                 ds = self.ds / self.n_sub
                 taus = self._tau_of_s(tau, np.array([phi]))[0]
+                # ★ 只有**锚点在该截面之后**的丝，才对该截面产生力矩。
+                #   A 段丝锚在 L1=200mm、B 段丝锚在 L2=400mm
+                #   ⇒ s<200 时 6 根都算；s>200 时只剩 3 根 B 丝 ⇒ M 直接掉一半
+                mask = self._active_mask(s)
                 # 腱力矩：丝在 (r cosψ, r sinψ)，拉力沿 −z
                 #   M = p × F = r·τ·(−sinψ, +cosψ, 0)
-                # ψ=0 的丝 => M 沿 +y => 绕 y 正转 => e_z 偏向 +x（朝该丝弯）
                 rd = self.g["r_disk"]
-                Mx = -rd * np.sum(taus * np.sin(self.psi))
-                My = rd * np.sum(taus * np.cos(self.psi))
+                Mx = -rd * np.sum(taus * mask * np.sin(self.psi))
+                My = rd * np.sum(taus * mask * np.cos(self.psi))
                 # 尖端力力矩（体坐标）
                 if np.any(Ft):
                     Mt = np.cross(np.array([0.0, 0.0, self.g["L_total"] - s]),
