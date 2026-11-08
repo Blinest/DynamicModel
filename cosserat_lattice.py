@@ -48,7 +48,7 @@ L1 = 0.2
 # 材料率的参考点是 w=1.5mm 时的网格统计值；改 w 时按 w/1.5 一阶缩放
 W_REF, F_REF = 1.5, dict(seg1=0.33, seg2=0.58)
 SEG = [dict(alpha=34.0, w=2.0, tag="段1"),
-       dict(alpha=20.0, w=1.5, tag="段2")]
+       dict(alpha=20.0, w=2.0, tag="段2")]
 
 
 def frac_of(seg, key):
