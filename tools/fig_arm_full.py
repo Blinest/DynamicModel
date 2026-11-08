@@ -123,10 +123,25 @@ def build_mask(theta_total):
     return nx, ny, mat
 
 
+def comp_force(theta_mm, s_mm, ss, kf):
+    """该处的**压缩力**大小 (N)：F<0 表示受压，返回 max(0, -F)。"""
+    kap = float(np.interp(s_mm * 1e-3, ss, kf))          # 1/m
+    alpha = F.seg_params(s_mm)[0] if False else None
+    a_deg = (M.ALPHA_A if s_mm <= L_SEG else M.ALPHA_B)
+    w_mm = 2.0
+    A = (w_mm * 1e-3) * (1.5e-3)                          # 筋截面积 m²
+    eps = kap * M.R_OUT * np.cos(theta_mm / R_OUT_MM)      # 膜应变
+    F_ = M_E_MOD * (eps * np.sin(np.radians(a_deg))) * A
+    return max(0.0, -F_)
+
+
+M_E_MOD = 2.0e8
+
+
 def render(ax, theta_total, nx, ny, mat, title):
     ss, kf = M.kappa_profile(theta_total)
     sg, P, Rm = M.build_frames(kf, ss)
-    quads = []
+    quads, comps = [], []
     for k in np.where(mat.ravel())[0]:
         ix, iy = k % nx, k // nx
         x0, x1 = ix * DS, (ix + 1) * DS
@@ -134,20 +149,27 @@ def render(ax, theta_total, nx, ny, mat, title):
         pts = [M.surface(P, Rm, sg, yy * 1e-3, xx / R_OUT_MM, M.R_OUT + 0.03e-3)
                for xx, yy in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
         quads.append(pts)
-    quads = [q for q in quads if np.isfinite(np.asarray(q)).all()]
-    pc = Poly3DCollection(quads, facecolor=RED, edgecolor="none", linewidth=0,
-                          antialiased=True)
+        comps.append(comp_force(0.5 * (x0 + x1), 0.5 * (y0 + y1), ss, kf))
+    keep = [i for i, q in enumerate(quads)
+            if np.isfinite(np.asarray(q)).all()]
+    quads = [quads[i] for i in keep]
+    comps = np.array([comps[i] for i in keep])
+    cmax = max(comps.max(), 1e-9)
+    pc = Poly3DCollection(quads, edgecolor="none", linewidth=0, antialiased=True)
+    import matplotlib.cm as cm
+    pc.set_facecolor(cm.coolwarm(comps / cmax))     # 蓝=力小, 红=压缩大
     ax.add_collection3d(pc)
-    # 基座放画面**最底部**（z 从 −0.02 起），x/y 取横向可达 ±0.34
+    half = 0.432
     ax.set_xlim(-0.34, 0.34)
     ax.set_ylim(-0.34, 0.34)
     ax.set_zlim(-0.02, 0.45)
-    dx = 0.34 * 2; dy = 0.34 * 2; dz = 0.45 + 0.02
-    m = max(dx, dy, dz)
-    ax.set_box_aspect((dx / m, dy / m, dz / m), zoom=1.05)
+    dx = 0.68; dy = 0.68; dz = 0.47
+    m_ = max(dx, dy, dz)
+    ax.set_box_aspect((dx / m_, dy / m_, dz / m_), zoom=1.05)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
-    ax.set_title(title, fontsize=9, color=RED)
+    ax.set_title(f"{title}   最大压缩力 {cmax:.1f} N", fontsize=9, color=RED)
+    return cmax
 
 
 def main():
@@ -156,7 +178,7 @@ def main():
         nx, ny, mat = build_mask(th)
         ax = fig.add_subplot(1, 2, k + 1, projection="3d")
         render(ax, th, nx, ny, mat,
-               "直臂 0°" if k == 0 else "180° 弯曲")
+               "直臂 0°" if k == 0 else "180° 弯曲（红=压缩大 / 蓝=力小）")
     fig.suptitle("完整臂形（全长 400 mm，掩膜法；材料率含圆角与段界厚壁筒）",
                  fontsize=10)
     fig.tight_layout()
