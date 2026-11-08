@@ -186,8 +186,7 @@ def render(ax, kvec, nx, ny, mat, title, lims):
     ax.set_box_aspect((1, 1, 1), zoom=1.15)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
     ax.view_init(elev=14, azim=-62)
-    # 文字已按要求全部去除
-    del title
+    ax.set_title(title, fontsize=9, color=RED)      # 仅 ASCII，无中文
 
 
 FMAX_GL = 20.0
@@ -220,7 +219,7 @@ def main():
             kv_all[m] = kv
             nx, ny, mat = build_mask(kv)
             ax = fig.add_subplot(gs[0, j], projection="3d")
-            render(ax, kv, nx, ny, mat, f"{nm}  θ={deg:.0f}°", lims)
+            render(ax, kv, nx, ny, mat, f"{m}  theta={deg:.0f}deg", lims)
             # 下方：6 根丝的位移
             axb = fig.add_subplot(gs[1, j])
             d6 = dl6(kv)
@@ -228,9 +227,16 @@ def main():
             axb.bar(range(6), d6, color=cols, alpha=0.92)
 
             axb.set_ylim(0, 11)
-            axb.set_xticks([]); axb.set_yticks([])
-            for sp in axb.spines.values():
-                sp.set_visible(False)
+            axb.set_xticks(range(6))
+            axb.set_xticklabels([f"M{k+1}" for k in range(6)], fontsize=7)
+            axb.tick_params(labelsize=6)
+            axb.grid(alpha=0.25, ls=":", axis="y")
+            for kk in range(6):
+                axb.text(kk, d6[kk] + 0.15, f"{d6[kk]:.1f}", ha="center",
+                         fontsize=6.5,
+                         color=RED if kk in (0, 2, 4) else GREEN)
+            if j == 0:
+                axb.set_ylabel("dL (mm)", fontsize=8)
         # 总标题已去除
         fig.tight_layout()
         fn = f"/tmp/_bm_{kf:02d}.png"
