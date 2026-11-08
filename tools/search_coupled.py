@@ -31,62 +31,41 @@ def _hat(v):
 
 
 class CoupledModel:
+    """兼容薄壳：内部就是 TdcrModelV2(axial=True)。
+
+    统一入口在 tdcr_model_v2，这里只保留旧名以免打断已有脚本。
+    """
     def __init__(self, EA_scale=1.0, mu=0.0, T0=10.0, n_sub=3):
-        ks = CL.stiffness()
-        h = NSEG // 2
-        self.EI = np.array([ks[0]["EI"]] * h + [ks[1]["EI"]] * (NSEG - h))
-        ea = np.array([ks[0]["EA"]] * h + [ks[1]["EA"]] * (NSEG - h))
-        self.EA = ea * EA_scale
-        self.mu = mu; self.T0 = T0; self.n_sub = n_sub
-        self.ds = L_TOT / NSEG
+        import tdcr_model_v2 as V2
+        self._m = V2.TdcrModelV2(mu=mu, T0=T0, n_sub=n_sub, axial=True)
+        if EA_scale != 1.0:                    # 缩放 EA 用于灵敏度分析
+            self._m.EA = self._m.EA * float(EA_scale)
+        self.EI = self._m.EI; self.EA = self._m.EA
+        self.ds = self._m.ds; self.mu = mu; self.T0 = T0
+        self.n_sub = n_sub
 
     def solve(self, tau, F_tip=None):
-        p = np.zeros(3); R = np.eye(3); phi = 0.0; s = 0.0
-        P = [p.copy()]; PL = [0.0]; K = [np.zeros(3)]
-        Ft = np.zeros(3) if F_tip is None else np.asarray(F_tip, float)
-        for i in range(NSEG):
-            ei, ea = self.EI[i], self.EA[i]
-            for _ in range(self.n_sub):
-                ds = self.ds / self.n_sub
-                decay = np.exp(-self.mu * phi)
-                ts = tau * decay
-                rd = R_DISK
-                Mx = -rd * np.sum(ts * np.sin(PSI))
-                My = rd * np.sum(ts * np.cos(PSI))
-                if np.any(Ft):
-                    Mt = np.cross(np.array([0.0, 0.0, L_TOT - s]), R.T @ Ft)
-                    Mx += Mt[0]; My += Mt[1]
-                kap = np.array([Mx, My]) / ei
-                # 轴向压缩：腱张力合力的轴向分量（沿切向）
-                n_z = -np.sum(ts) - (Ft @ (R @ np.array([0, 0, 1.0])))
-                eps = n_z / ea
-                kvec = np.array([kap[0], kap[1], 0.0])
-                p = p + (R @ np.array([0, 0, 1.0])) * ds * (1.0 + eps)
-                R = R @ (np.eye(3) + _hat(kvec) * ds
-                         + 0.5 * _hat(kvec) @ _hat(kvec) * ds * ds)
-                u, _, vt = np.linalg.svd(R); R = u @ vt
-                phi += np.linalg.norm(kvec) * ds
-                s += ds
-            P.append(p.copy()); PL.append(phi); K.append(kvec)
-        return dict(p=np.array(P), phi=np.array(PL), kappa=np.array(K), s=s)
+        return self._m.solve(tau, F_tip=F_tip)
 
     def bend(self, tau, **kw):
-        return np.degrees(self.solve(tau, **kw)["phi"][-1])
+        return self._m.bend_angle(tau, **kw)
 
     def dL(self, tau, **kw):
-        o = self.solve(tau, **kw)
-        phi = o["phi"]; k = o["kappa"]
-        phiA, phiB = phi[NSEG // 2], phi[-1]
-        km = k[:, :2].sum(0)
+        """返回 (弯曲项, 轴向项) 供对比；合计 = 弯曲 + 轴向。"""
+        d = self._m.delta_L(tau, **kw)
+        o = self._m.solve(tau, **kw)
+        phi = o["phi"]; phiA, phiB = phi[self._m.N // 2], phi[-1]
+        km = o["kappa"][:, :2].sum(0)
         phi_b = np.arctan2(-km[0], km[1]) if np.any(np.abs(km) > 1e-12) else 0.0
-        # 轴向压缩量（平均）
-        eps_mean = -np.sum(tau) / self.EA.mean()
-        out_bend = np.zeros(6)
-        out_ax = -eps_mean * L_TOT      # ⚠ 臂体压短 => 丝要收更多，取正
+        bend_only = np.zeros(6); ax_only = np.zeros(6)
+        eps = -(-float(np.sum(tau)) / float(self._m.EA.mean()))
+        half_len = self._m.g["L_total"] * 0.5
         for w, ps in enumerate(PSI):
-            span = phiA if w % 2 == 0 else phiB
-            out_bend[w] = R_DISK * span * np.cos(ps - phi_b)
-        return out_bend * 1e3, out_ax * 1e3
+            span_is_A = (w % 2 == 0)
+            span = phiA if span_is_A else phiB
+            bend_only[w] = R_DISK * span * np.cos(ps - phi_b) * 1e3
+            ax_only[w] = eps * (half_len if span_is_A else self._m.g["L_total"]) * 1e3
+        return bend_only, ax_only
 
 
 def solve_A(m, th, ph, it=16):

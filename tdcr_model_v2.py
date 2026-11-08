@@ -53,9 +53,10 @@ def _hat(v):
 class TdcrModelV2:
     """20 段 TDCR 模型（刚度来自 cosserat_lattice）。"""
 
-    def __init__(self, mu=None, T0=None, n_sub=5, **kw):
+    def __init__(self, mu=None, T0=None, n_sub=5, axial=True, **kw):
         g = dict(GEOM); g.update(kw)
         self.g = g
+        self.axial = bool(axial)      # 是否计入肌腱→轴向压缩耦合
         self.N = int(g["NSEG"])
         self.ds = g["L_total"] / self.N
         self.mu = float(g["mu"] if mu is None else mu)
@@ -103,7 +104,13 @@ class TdcrModelV2:
                     My += Mt[1]
                 kap = np.array([Mx, My]) / ei          # κ = M/EI（弯 2 分量）
                 kvec = np.array([kap[0], kap[1], 0.0])
-                p = p + (R @ np.array([0, 0, 1.0])) * ds
+                # ── 轴向耦合：腱张力把臂体压短 ────────────────────
+                #   n_z = −Στ_j − F_tip·e_z(体)   ⇒   ε = n_z/EA
+                n_z = -float(np.sum(taus))
+                if np.any(Ft):
+                    n_z -= float(Ft @ (R @ np.array([0.0, 0.0, 1.0])))
+                eps = (n_z / self.EA[i]) if self.axial else 0.0
+                p = p + (R @ np.array([0, 0, 1.0])) * ds * (1.0 + eps)
                 R = R @ (np.eye(3) + _hat(kvec) * ds +
                          0.5 * _hat(kvec) @ _hat(kvec) * ds * ds)
                 u, _, vt = np.linalg.svd(R)
@@ -143,9 +150,17 @@ class TdcrModelV2:
         phi_b = (np.arctan2(-kmean[0], kmean[1])
                  if np.any(np.abs(kmean) > 1e-12) else 0.0)
         out = np.zeros(6)
+        # 轴向压缩量：按各自跨度取（A 段丝半跨、B 段丝全跨）
+        eps_mean = 0.0
+        if self.axial:
+            n_z = -float(np.sum(tau))
+            eps_mean = -n_z / float(self.EA.mean())    # >0 = 缩短
+        half_len = self.g["L_total"] * 0.5
         for w, psi in enumerate(self.psi):
-            span = phiA if w % 2 == 0 else phiB          # M1/M3/M5 = A 段
+            span_is_A = (w % 2 == 0)                   # M1/M3/M5 = A 段
+            span = phiA if span_is_A else phiB
             dL = -self.g["r_disk"] * span * np.cos(psi - phi_b)
+            dL += -eps_mean * (half_len if span_is_A else self.g["L_total"])
             out[w] = max(0.0, -dL) * 1e3
         return out
 
