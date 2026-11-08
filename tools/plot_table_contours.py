@@ -36,14 +36,29 @@ def contours(d):
     def grid(v):
         return v.reshape(len(TH), len(PH))
 
-    fig, axes = plt.subplots(1, 4, figsize=(19, 4.6))
+    # 曲率：由 tau 反算合力矩 M，再 κ = |M|/EI（μ=0 时 M 沿程恒定，κ 分段恒定）
+    psi = np.radians(np.array([0, 60, 120, 180, 240, 300], float))
+    tau = d["tau"][sel]
+    Mx = -5e-3 * (tau * np.sin(psi)).sum(1)
+    My = 5e-3 * (tau * np.cos(psi)).sum(1)
+    Mg = np.hypot(Mx, My)
+    EI = np.array([0.01499, 0.01266])
+    k1 = Mg / EI[0]
+    k2 = Mg / EI[1]
+    kmean = 0.5 * (k1 + k2)
+
+    fig, axes = plt.subplots(2, 3, figsize=(16.5, 8.6))
+    ####################################################################
+    # 曲率：由 tau 反算合力矩 M，再 κ = |M|/EI（μ=0 时 M 沿程恒定，κ 分段恒定）
     panels = [
         (grid(tip[:, 0]), "末端 x (mm)", "RdBu_r"),
         (grid(tip[:, 2]), "末端 z (mm)", "viridis"),
         (grid(tmax), "最大张力 (N)", "inferno"),
         (grid(dlmax), "最大收丝 (mm)", "cividis"),
+        (grid(k1), "根部曲率 kappa_1 (1/m)", "magma"),
+        (grid(kmean), "平均曲率 (kappa_1+kappa_2)/2", "plasma"),
     ]
-    for ax, (G, name, cmap) in zip(axes, panels):
+    for ax, (G, name, cmap) in zip(axes.ravel(), panels):
         im = ax.pcolormesh(PH, TH, G, cmap=cmap, shading="auto")
         cs = ax.contour(PH, TH, G, levels=7, colors="w", linewidths=0.6,
                         alpha=0.8)
@@ -53,7 +68,7 @@ def contours(d):
         ax.set_title(name, fontsize=9)
         ax.tick_params(labelsize=7)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
-    fig.suptitle("v2 查表云图（1500 点，F_tip=0）", fontsize=10)
+    fig.suptitle("v2 查表云图（1500 点，F_tip=0）—— 含曲率", fontsize=10)
     fig.tight_layout()
     fig.savefig("fig_table_contour.png", dpi=150, bbox_inches="tight")
     print("saved fig_table_contour.png")
