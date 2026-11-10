@@ -228,6 +228,17 @@ class TdcrModelV2:
             print(f"  EA: 段1 {d['EA1']:.0f} / 段2 {d['EA2']:.0f} N")
             print(f"  丝分布 Φ{d['r_disk']*2e3:.0f} mm，6 根，ψ=0/60/…/300°")
             print(f"  摩擦 μ={d['mu']:.2f}，预紧 T0={self.T0:.1f} N")
+            # ⚠ 可用区间检查（见 docs/derivations/03_regime_limit.md）
+            for i in (0, len(self.EI) - 1):
+                n_taut = 6 if i == 0 else 3
+                N = n_taut * self.T0
+                Pcr = np.pi ** 2 * self.EI[i] / (self.g["L_total"] * 0.5) ** 2
+                ratio = N / Pcr
+                # 经验阈值来自 docs/derivations/03：T0<=5 正常、7-9 反号、10 发散
+                flag = ("⚠ 发散风险" if ratio > 12
+                        else ("⚠ 接近临界" if ratio > 9 else "ok"))
+                print(f"    段{1 if i == 0 else 2}: N_ax={N:.0f} N  "
+                      f"P_cr={Pcr:.2f} N  N/P_cr={ratio:.1f}  {flag}")
         return d
 
 
