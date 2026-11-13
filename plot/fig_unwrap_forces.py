@@ -37,7 +37,8 @@ from matplotlib.collections import LineCollection
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cosserat_lattice as CL   # noqa: E402
 
-rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "DejaVu Sans"]
+rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei",
+                               "Noto Sans CJK SC", "DejaVu Sans"]
 rcParams["axes.unicode_minus"] = False
 RED, BLUE, GREEN = "#A34D4E", "#516CA3", "#8DAE7F"
 
@@ -66,7 +67,9 @@ def strut_force(eps, alpha_deg, w_mm):
 
 
 def panel(ax, seg, kappa, title):
-    alpha, w = seg["alpha"], seg["w"]
+    alpha = seg["alpha"]
+    # 兼容处理：如果 w < 0.1 说明原始数据是米，转成毫米
+    w = seg["w"] * 1000.0 if seg["w"] < 0.1 else seg["w"] 
     Ls = B / np.cos(np.radians(alpha))
     a = Ls * np.sin(np.radians(alpha))
     pa = 2 * a
@@ -74,6 +77,7 @@ def panel(ax, seg, kappa, title):
     Fmax = 0.0
     n_row = int(WIN / pa) + 2
     n_col = int(CIRC / B) + 2
+
     for n in range(-2, n_row):
         for m in range(-2, n_col):
             if (m - n) % 2:
@@ -91,35 +95,70 @@ def panel(ax, seg, kappa, title):
                 Fmax = max(Fmax, abs(F))
                 segs.append([p0, p1])
                 cols.append(RED if F > 0 else BLUE)
-                lws.append(0.6 + 3.2 * min(abs(F) / 30.0, 1.0))
+                lws.append(1.5 + 4.5 * min(abs(F) / 30.0, 1.0))
     lc = LineCollection(segs, colors=cols, linewidths=lws, capstyle="round",
                         zorder=3)
     ax.add_collection(lc)
+    max_y = max([max(p[0][1], p[1][1]) for p in segs]) if segs else WIN
+    min_y = min([min(p[0][1], p[1][1]) for p in segs]) if segs else 0
     ax.set_xlim(0, CIRC)
-    ax.set_ylim(0, WIN)
-    ax.set_aspect("equal")
+    ax.set_ylim(max(0,min_y), min(WIN,max_y))
+
+     # ── 修改坐标轴样式：隐藏方框，标出 x、y 轴线 ──
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_position(('data', 0))  # x轴移到 y=0 处
+    ax.spines['left'].set_position(('data', 0))    # y轴移到 x=0 处
+
+    # 画箭头 (需要按当前轴比例调整箭头长度)
+    arrow_kw = dict(arrowstyle="-|>", color="black", lw=1.0, mutation_scale=12, clip_on=False)
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    x_span = xlim[1] - xlim[0]
+    y_span = ylim[1] - ylim[0]
+    
+    # 箭头位置和大小
+    # x 轴箭头
+    ax.plot([xlim[1] - 0.08 * x_span, xlim[1]], [0, 0], color="black", lw=1.0, 
+            clip_on=False, zorder=10)
+    ax.plot(xlim[1], 0, marker=">", color="black", markersize=6, 
+            clip_on=False, zorder=10)
+    
+    # y 轴箭头
+    ax.plot([0, 0], [ylim[1] - 0.08 * y_span, ylim[1]], color="black", lw=1.0, 
+            clip_on=False, zorder=10)
+    ax.plot(0, ylim[1], marker="^", color="black", markersize=6, 
+            clip_on=False, zorder=10)
+    # 调整刻度位置
+    ax.xaxis.set_ticks_position('bottom')
+    ax.yaxis.set_ticks_position('left')
+    # 避免负数刻度穿过文字，将 x 轴最左侧的刻度标签隐藏或偏移（如果需要）
+    ax.tick_params(axis='both', direction='in', length=3)
+
+    ax.set_aspect("equal", adjustable="box") # box而非datalim
     ax.set_xticks([0, CIRC / 3, 2 * CIRC / 3, CIRC])
-    ax.set_xticklabels(["0", "16.8", "33.5", "50.3"], fontsize=7)
-    ax.tick_params(labelsize=7)
-    ax.set_xlabel("周向展开 (mm)   θ=0 为受拉侧、θ=180° 为受压侧", fontsize=8)
-    ax.set_ylabel("轴向 (mm)", fontsize=8)
+    ax.set_xticklabels(["0", "16.8", "33.5", "50.3"], fontsize=8)
+    ax.tick_params(labelsize=8)
+    ax.set_xlabel("周向展开 (mm)", fontsize=12)
+    ax.set_ylabel("轴向 (mm)", fontsize=12)
     eps_max = kappa * R_OUT_MM * 1e-3
     F_max = strut_force(eps_max, alpha, w)
-    ax.set_title(f"{title}\nα={alpha}° w={w}mm  κ={kappa:.2f} 1/m  "
-                 f"ε_max={eps_max*100:.1f}%  极限力 ±{abs(F_max):.1f} N",
-                 fontsize=9, color=RED)
+    ax.set_title(f"{title}\nα={alpha}° w={w}mm κ={kappa:.2f} 1/m  "
+                f"ε_max={eps_max*100:.1f}%  极限力 ±{abs(F_max):.1f} N",
+                fontsize=9, color=RED)
     return abs(F_max)
 
 
 def main():
     k1, k2 = kappa_example()
+    # 每栏的宽高比 = CIRC : WIN
     print(f"示例工况（总弯角 90°）：κ1={k1:.2f}  1/m，κ2={k2:.2f}  1/m")
-    fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.6))
-    fm1 = panel(axes[0], CL.SEG[0], k1, "① 段1（α=34°, w=2.0）")
-    fm2 = panel(axes[1], CL.SEG[1], k2, "② 段2（α=20°, w=2.0）")
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 6))
+    fm1 = panel(axes[0], CL.SEG[0], k1, "段1")
+    fm2 = panel(axes[1], CL.SEG[1], k2, "段2")
     fig.suptitle("平面展开 + 斜撑受力（红=受拉 · 蓝=受压 · 线宽∝|F|）", fontsize=10)
-    fig.tight_layout()
-    fig.savefig("fig_unwrap_forces.png", dpi=165, bbox_inches="tight")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig("fig_unwrap_forces.png", dpi=300, bbox_inches="tight", transparent = True)
     print("saved fig_unwrap_forces.png")
     print(f"\n极限位置（θ=0 最外层受拉 / θ=180° 最内层受压）：")
     print(f"  段1: ε={k1*R_OUT_MM*1e-3*100:.2f}%  F=±{fm1:.1f} N")
